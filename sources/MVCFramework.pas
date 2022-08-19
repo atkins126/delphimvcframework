@@ -380,7 +380,6 @@ type
     constructor Create(const AWebRequest: TWebRequest;
       const ASerializers: TDictionary<string, IMVCSerializer>);
     destructor Destroy; override;
-
     function ClientIp: string;
     function ClientPrefer(const AMediaType: string): Boolean;
     function ClientPreferHTML: Boolean;
@@ -806,6 +805,11 @@ type
     function SessionAs<T: TWebSession>: T;
     procedure RaiseSessionExpired; virtual;
 
+    // Avoiding mid-air collisions - support
+    procedure SetETag(const Data: String);
+    procedure CheckIfMatch(const Data: String);
+    // END - Avoiding mid-air collisions - support
+
     // Properties
     property Context: TWebContext read GetContext write FContext;
     property Session: TWebSession read GetSession;
@@ -887,7 +891,8 @@ type
     /// <param name="AContext">Webcontext which contains the complete request and response of the actual call.</param>
     /// <param name="AActionName">Method name of the matching controller method.</param>
     /// <param name="AHandled">If set to True the Request would finished. Response must be set by the implementor. Default value is False.</param>
-    procedure OnAfterControllerAction(AContext: TWebContext; const AActionName: string;
+    procedure OnAfterControllerAction(AContext: TWebContext;
+      const AControllerQualifiedClassName: string; const AActionName: string;
       const AHandled: Boolean);
 
     /// <summary>
@@ -957,7 +962,8 @@ type
       const AControllerQualifiedClassName: string; const AActionName: string;
       var AHandled: Boolean);
     procedure ExecuteAfterControllerActionMiddleware(const AContext: TWebContext;
-      const AActionName: string; const AHandled: Boolean);
+      const AControllerQualifiedClassName: string; const AActionName: string;
+      const AHandled: Boolean);
     procedure ExecuteAfterRoutingMiddleware(const AContext: TWebContext; const AHandled: Boolean);
     procedure DefineDefaultResponseHeaders(const AContext: TWebContext);
     procedure OnBeforeDispatch(ASender: TObject; ARequest: TWebRequest; AResponse: TWebResponse;
@@ -1106,12 +1112,14 @@ uses
   MVCFramework.JSONRPC,
   MVCFramework.Router,
   MVCFramework.Rtti.Utils,
-  MVCFramework.Serializer.HTML, MVCFramework.Serializer.Abstract;
+  MVCFramework.Serializer.HTML, MVCFramework.Serializer.Abstract,
+  MVCFramework.Utils;
 
 var
   gIsShuttingDown: Int64 = 0;
   gMVCGlobalActionParamsCache: TMVCStringObjectDictionary<TMVCActionParamCacheItem> = nil;
   gHostingFramework: TMVCHostingFrameworkType = hftUnknown;
+
 
 function IsShuttingDown: Boolean;
 begin
@@ -1460,23 +1468,20 @@ end;
 
 procedure TMVCWebRequest.DefineContentType;
 begin
-  if FWebRequest.MethodType in [mtPut, mtPost, mtPatch] then
-  begin
-    SplitContentMediaTypeAndCharset(FWebRequest.GetFieldByName('Content-Type'), FContentMediaType,
-      FCharset);
-    { if request doesn't contain content-type }
-    if FContentMediaType.IsEmpty then
-      FContentMediaType := TMVCConstants.DEFAULT_CONTENT_TYPE;
-    if FCharset.IsEmpty then
-      FCharset := TMVCConstants.DEFAULT_CONTENT_CHARSET;
-    FContentType := BuildContentType(FContentMediaType, FCharset);
-  end
-  else
-  begin
-    FContentMediaType := '';
-    FCharset := '';
-    FContentType := '';
-  end;
+{
+  While not strictly required nor defined, DMVCFramework supports
+  sending body data for all HTTP VERBS
+  https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods/GET
+}
+  SplitContentMediaTypeAndCharset(
+    FWebRequest.GetFieldByName('Content-Type'),
+    FContentMediaType,
+    FCharset);
+  if FContentMediaType.IsEmpty then
+    FContentMediaType := TMVCConstants.DEFAULT_CONTENT_TYPE;
+  if FCharset.IsEmpty then
+    FCharset := TMVCConstants.DEFAULT_CONTENT_CHARSET;
+  FContentType := BuildContentType(FContentMediaType, FCharset);
 end;
 
 destructor TMVCWebRequest.Destroy;
@@ -2495,7 +2500,9 @@ begin
                   end;
                   lSelectedController.MVCControllerBeforeDestroy;
                 end;
-                ExecuteAfterControllerActionMiddleware(lContext, lRouter.MethodToCall.name,
+                ExecuteAfterControllerActionMiddleware(lContext,
+                  lRouter.ControllerClazz.QualifiedClassName,
+                  lRouter.MethodToCall.name,
                   lHandled);
                 lContext.Response.ContentType := lSelectedController.ContentType;
                 fOnRouterLog(lRouter, rlsRouteFound, lContext);
@@ -2624,13 +2631,14 @@ begin
 end;
 
 procedure TMVCEngine.ExecuteAfterControllerActionMiddleware(const AContext: TWebContext;
-  const AActionName: string; const AHandled: Boolean);
+  const AControllerQualifiedClassName: string; const AActionName: string;
+  const AHandled: Boolean);
 var
   I: Integer;
 begin
   for I := 0 to FMiddlewares.Count - 1 do
   begin
-    FMiddlewares[I].OnAfterControllerAction(AContext, AActionName, AHandled);
+    FMiddlewares[I].OnAfterControllerAction(AContext, AControllerQualifiedClassName, AActionName, AHandled);
   end;
 end;
 
@@ -3364,6 +3372,28 @@ end;
 
 { TMVCController }
 
+procedure TMVCController.CheckIfMatch(const Data: String);
+var
+  lReqETag: String;
+begin
+  if Data.IsEmpty then
+  begin
+    raise EMVCException.Create(HTTP_STATUS.InternalServerError, 'Cannot calculate ETag using empty value');
+  end;
+
+  // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/ETag#avoiding_mid-air_collisions
+  lReqETag := Context.Request.GetHeader('If-Match');
+  if lReqETag.IsEmpty then
+  begin
+    raise EMVCException.Create(HTTP_STATUS.PreconditionFailed, 'If-Match header is empty');
+  end;
+
+  if lReqETag <> GetMD5HashFromString(Data) then
+  begin
+    raise EMVCException.Create(HTTP_STATUS.PreconditionFailed, 'mid-air collisions detected, cannot update or delete resource.');
+  end;
+end;
+
 constructor TMVCController.Create;
 begin
   inherited Create;
@@ -3689,6 +3719,11 @@ end;
 function TMVCRenderer.ToMVCList(const AObject: TObject; AOwnsObject: Boolean): IMVCList;
 begin
   Result := MVCFramework.DuckTyping.WrapAsList(AObject, AOwnsObject);
+end;
+
+procedure TMVCController.SetETag(const Data: String);
+begin
+  Context.Response.SetCustomHeader('ETag', GetMD5HashFromString(Data));
 end;
 
 procedure TMVCController.SetViewData(const aModelName: string; const Value: TObject);

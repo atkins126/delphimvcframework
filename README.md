@@ -466,7 +466,7 @@ The current beta release is named 3.2.2-nitrogen. If you want to stay on the-edg
 
 - ⚡New `TMVCRESTClient` implementation based on *Net components, the previous one was based on INDY Components (thanks to [João Antônio Duarte](https://github.com/joaoduarte19)).
 
-- ⚡New! `MVCJSONRPCAllowGET` attribute allows a remote JSON-RPC published object, or a specific method, to be called using GET HTTP Verb as well as POST HTTP Verb. POST is always available, GET is available only if explicitly allowed. `IMVCJSONRPCExecutor` allows to specify which HTTP Verb to use when call the server JSON.RPC methods. The default verb can be injected in the constructor and each `ExecuteRequest`/`ExecuteNotification` allows to override od adhere to the instance default.
+- ⚡New! `MVCJSONRPCAllowGET` attribute allows a remote JSON-RPC published object, or a specific method, to be called using GET HTTP Verb as well as POST HTTP Verb. POST is always available, GET is available only if explicitly allowed. `IMVCJSONRPCExecutor` allows to specify which HTTP Verb to use when call the server JSON-RPC methods. The default verb can be injected in the constructor and each `ExecuteRequest`/`ExecuteNotification` allows to override od adhere to the instance default.
 
 - ⚡New! eLua server side view support added! The View engine requires Lua's dlls so it is not included in the main package but in a sampl project. Check `serversideviews_lua` sample. 
 
@@ -528,6 +528,8 @@ The current beta release is named 3.2.2-nitrogen. If you want to stay on the-edg
 
 - ✅ Improved! Now `TMVCStaticFileMiddleware` is able to manage high-level criteria to show/hide/mask specific files in the documetn web root. Check [Issue 548](https://github.com/danieleteti/delphimvcframework/issues/548) and the updated sample `samples\middleware_staticfiles\` for more info.
 
+- ✅ Improved! In case of multiple MVCPath, Swagger consider only the first one (Thanks to V. Ferri and our sponsors)
+
 - ⚡New! Mechanism to customize the JWT claims setup using the client request as suggested in [issue495](https://github.com/danieleteti/delphimvcframework/issues/495)
 
 - ⚡New! Added `TMVCActiveRecord.Merge<T>(CurrentListOfT, ChangesOfT)` to allow merge between two lists of `TMVCActiveRecord` descendants using `UnitOfWork` design pattern. Check the button "Merge" in demo "activerecord_showcase".
@@ -537,6 +539,8 @@ The current beta release is named 3.2.2-nitrogen. If you want to stay on the-edg
 - ⚡ New! Serialization and Deserialization for Pascal `set` (Thanks to [rshuck](https://github.com/rshuck) for his suggestions)
 
 - ⚡ New! Added partitioning for `TMVCActiveRecord descendants` (more info ASAP)
+
+- ✅ Dramatically improved all "JSON-To-DataSet" operations (1 order of magnitude c.a.). Thanks to [MPannier](https://github.com/MPannier) and [David Moorhouse](https://github.com/fastbike) for their detailed analysis - More info [here](https://github.com/danieleteti/delphimvcframework/issues/553).
 
 - ✅ Improved! After a big refactoring (*"I love to delete code" -- cit. Daniele Teti*), support a new SQLGenerator is just 2 (two) methods away! Just as example, this is the current version of `TMVCSQLGeneratorPostgreSQL`
 
@@ -570,6 +574,8 @@ The current beta release is named 3.2.2-nitrogen. If you want to stay on the-edg
 - ✅ Improved `MVCAREntitiesGenerator` project - now it can better handle border cases, field names which collide with Delphi keywords and a big number of tables.
 
 - ✅ Improved error handling for JSON-RPC APIs (Thanks to [David Moorhouse](https://github.com/fastbike)). More info [here](https://github.com/danieleteti/delphimvcframework/issues/538).
+
+- ✅ Improved parameter handling for enum and set in JSON-RPC APIs.
 
 - ⚡ New! Added `ActiveRecordConnectionRegistry.AddDefaultConnection(const aConnetionDefName: String)`. The connection definition **must** be known by FireDAC. This method simplifies the most common scenario shown below.
 
@@ -676,6 +682,11 @@ The current beta release is named 3.2.2-nitrogen. If you want to stay on the-edg
       //If the cookie doesn't exist (or cannot be deserialized) an exception is raised.
     end;
     ```
+	
+- ✅ Improved! While not strictly required nor defined, DMVCFramework supports sending body data for all HTTP VERBS - see https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods/GET	
+
+- ⚡ New! Automated support to avoid "mid-air collisions". New methods `SetETag` and `CheckIfMatch` allows a better security without adding complexity to the controller code - check `avoid_mid_air_collisions_sample.dproj` sample and see  https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/ETag#avoiding_mid-air_collisions for more info about mid-air collisions.
+
 
 ### Bug Fixes in 3.2.2-nitrogen
 
@@ -704,6 +715,10 @@ The current beta release is named 3.2.2-nitrogen. If you want to stay on the-edg
 - Fix https://github.com/danieleteti/delphimvcframework/issues/335 (thanks to [João Antônio Duarte](https://github.com/joaoduarte19))
 
 - Fix https://github.com/danieleteti/delphimvcframework/issues/564
+
+- Fix https://github.com/danieleteti/delphimvcframework/issues/570 (Thanks [Marcos Nielsen](https://github.com/marcosnielsen)) 
+
+- Fix https://github.com/danieleteti/delphimvcframework/issues/565
 
 - Merged [PR#543](https://github.com/danieleteti/delphimvcframework/pull/543) (Now the `PathInfo` is trimmed so the router convert this "http://myserver.com/one " to this "http://myserver.com/one")
 

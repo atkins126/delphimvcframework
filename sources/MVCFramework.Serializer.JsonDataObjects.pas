@@ -69,7 +69,27 @@ type
     fStringDictionarySerializer: IMVCTypeSerializer;
     function TryMapNullableFloat(var Value: TValue; const JSONDataObject: TJsonObject;
       const AttribName: string): Boolean;
+    type
+      TFieldMetaInfo = record
+        NameAs: String;
+        Ignored: Boolean;
+      end;
+      TSerializationMetaInfo = record
+        FieldsMetaInfo: TArray<TFieldMetaInfo>;
+        IgnoredFields: TMVCIgnoredList;
+        NameCase: TMVCNameCase;
+        class function CreateFieldsMetaInfo(
+          const ADataSet: TDataSet;
+          const ANameCase: TMVCNameCase;
+          const AIgnoredFields: TMVCIgnoredList): TSerializationMetaInfo; static;
+      end;
   public
+    procedure ParseStringAsTValueUsingMetadata(
+      const AStringValue: String;
+      const DestinationTypeInfo: PTypeInfo;
+      const ExceptionHintString: String;
+      const AAttributes: TArray<TCustomAttribute>;
+      var AValue: TValue);
     function JSONObjectToRecord<T: record >(const JSONObject: TJsonObject): T; overload;
     function StrToRecord<T: record >(const AJSONString: String): T;
     procedure JSONObjectToNestedRecordField(const JSONObject: TJsonObject; RecordFieldRTTIType: TRttiField;
@@ -135,7 +155,9 @@ type
     procedure DataSetToJsonArrayOfValues(const ADataSet: TDataSet; const AJsonArray: TJDOJsonArray;
       const AIgnoredFields: TMVCIgnoredList);
     procedure JsonObjectToDataSet(const AJSONObject: TJDOJsonObject; const ADataSet: TDataSet;
-      const AIgnoredFields: TMVCIgnoredList; const ANameCase: TMVCNameCase);
+      const AIgnoredFields: TMVCIgnoredList; const ANameCase: TMVCNameCase); overload;
+    procedure JsonObjectToDataSet(const AJSONObject: TJDOJsonObject; const ADataSet: TDataSet;
+      const SerializationMetaInfo: TSerializationMetaInfo); overload;
     procedure JsonArrayToDataSet(const AJsonArray: TJDOJsonArray; const ADataSet: TDataSet;
       const AIgnoredFields: TMVCIgnoredList; const ANameCase: TMVCNameCase);
     function JsonArrayToArray(const AJsonArray: TJDOJsonArray): TValue;
@@ -1264,12 +1286,23 @@ procedure TMVCJsonDataObjectsSerializer.JsonArrayToDataSet(const AJsonArray: TJD
   const AIgnoredFields: TMVCIgnoredList; const ANameCase: TMVCNameCase);
 var
   I: Integer;
+  lSerializationMetaInfo: TSerializationMetaInfo;
 begin
-  for I := 0 to Pred(AJsonArray.Count) do
+  if AJsonArray.Count > 0 then
   begin
-    ADataSet.Append;
-    JsonObjectToDataSet(AJsonArray.Items[I].ObjectValue, ADataSet, AIgnoredFields, ANameCase);
-    ADataSet.Post;
+    lSerializationMetaInfo := TSerializationMetaInfo.CreateFieldsMetaInfo(
+      ADataSet,
+      ANameCase,
+      AIgnoredFields);
+    for I := 0 to Pred(AJsonArray.Count) do
+    begin
+      ADataSet.Append;
+      JsonObjectToDataSet(
+        AJsonArray.Items[I].ObjectValue,
+        ADataSet,
+        lSerializationMetaInfo);
+      ADataSet.Post;
+    end;
   end;
 end;
 
@@ -1424,84 +1457,90 @@ begin
 
     jdtString:
       begin
-        lValueTypeInfo := AValue.TypeInfo;
-        if (lValueTypeInfo = System.TypeInfo(TDate)) then
-          AValue := TValue.From<TDate>(ISODateToDate(AJSONObject[APropertyName].Value))
-
-        else if (lValueTypeInfo = System.TypeInfo(TDateTime)) then
-          AValue := TValue.From<TDateTime>(ISOTimeStampToDateTime(AJSONObject[APropertyName].Value))
-
-        else if (lValueTypeInfo = System.TypeInfo(TTime)) then
-          AValue := TValue.From<TTime>(ISOTimeToTime(AJSONObject[APropertyName].Value))
-        else if (AValue.Kind = tkRecord) and (lValueTypeInfo <> TypeInfo(TValue)) then { nullables }
-        begin
-          if lValueTypeInfo = TypeInfo(NullableString) then
-          begin
-            AValue := TValue.From<NullableString>(NullableString(AJSONObject[APropertyName].Value))
-          end
-          else if lValueTypeInfo = TypeInfo(NullableTDate) then
-          begin
-            AValue := TValue.From<NullableTDate>(NullableTDate(ISODateToDate(AJSONObject[APropertyName].Value)))
-          end
-          else if lValueTypeInfo = TypeInfo(NullableTDateTime) then
-          begin
-            AValue := TValue.From<NullableTDateTime>
-              (NullableTDateTime(ISOTimeStampToDateTime(AJSONObject[APropertyName].Value)))
-          end
-          else if lValueTypeInfo = TypeInfo(NullableTTime) then
-          begin
-            AValue := TValue.From<NullableTTime>(NullableTTime(ISOTimeToTime(AJSONObject[APropertyName].Value)))
-          end
-          else if lValueTypeInfo = TypeInfo(NullableTGUID) then
-          begin
-            AValue := TValue.From<NullableTGUID>(TMVCGuidHelper.StringToGUIDEx(AJSONObject[APropertyName].Value));
-          end
-          else
-            raise EMVCSerializationException.CreateFmt('Cannot deserialize property "%s" from string', [APropertyName]);
-        end
-        else if (AValue.Kind = tkEnumeration) then
-        begin
-          LEnumSerType := estEnumName;
-          LEnumMappedValues := nil;
-          if TMVCSerializerHelper.AttributeExists<MVCEnumSerializationAttribute>(ACustomAttributes, LEnumAsAttr) then
-          begin
-            LEnumSerType := LEnumAsAttr.SerializationType;
-            LEnumMappedValues := LEnumAsAttr.MappedValues;
-          end;
-
-          if LEnumSerType = estEnumName then
-          begin
-            TValue.Make(GetEnumValue(AValue.TypeInfo, AJSONObject[APropertyName].Value), AValue.TypeInfo, AValue)
-          end
-          else
-          begin
-            LMappedValueIndex := LEnumMappedValues.IndexOf(AJSONObject[APropertyName].Value);
-            if LMappedValueIndex < 0 then
-              raise EMVCSerializationException.CreateFmt('Cannot deserialize property "%s" from mapped values',
-                [APropertyName]);
-
-            TValue.Make(GetEnumValue(AValue.TypeInfo, GetEnumName(AValue.TypeInfo, LMappedValueIndex)),
-              AValue.TypeInfo, AValue)
-          end;
-        end
-        else if (AValue.Kind = tkInteger) and (TryStrToInt(AJSONObject[APropertyName].Value, lOutInteger)) then
-        begin
-          AValue := lOutInteger;
-        end
-        else if (AValue.Kind = tkInt64) and (TryStrToInt64(AJSONObject[APropertyName].Value, lOutInteger64)) then
-        begin
-          AValue := lOutInteger64;
-        end
-        else if lValueTypeInfo.Kind = tkSet then
-        begin
-          lInt := StringToSet(AValue.TypeInfo, StringReplace(AJSONObject[APropertyName].Value, ' ', '',
-            [rfReplaceAll]));
-          TValue.Make(lInt, AValue.TypeInfo, AValue);
-        end
-        else
-        begin
-          AValue := TValue.From<string>(AJSONObject[APropertyName].Value);
-        end;
+        ParseStringAsTValueUsingMetadata(
+          AJSONObject[APropertyName].Value,
+          AValue.TypeInfo,
+          'property ' + APropertyName,
+          ACustomAttributes,
+          AValue);
+//        lValueTypeInfo := AValue.TypeInfo;
+//        if (lValueTypeInfo = System.TypeInfo(TDate)) then
+//          AValue := TValue.From<TDate>(ISODateToDate(AJSONObject[APropertyName].Value))
+//
+//        else if (lValueTypeInfo = System.TypeInfo(TDateTime)) then
+//          AValue := TValue.From<TDateTime>(ISOTimeStampToDateTime(AJSONObject[APropertyName].Value))
+//
+//        else if (lValueTypeInfo = System.TypeInfo(TTime)) then
+//          AValue := TValue.From<TTime>(ISOTimeToTime(AJSONObject[APropertyName].Value))
+//        else if (AValue.Kind = tkRecord) and (lValueTypeInfo <> TypeInfo(TValue)) then { nullables }
+//        begin
+//          if lValueTypeInfo = TypeInfo(NullableString) then
+//          begin
+//            AValue := TValue.From<NullableString>(NullableString(AJSONObject[APropertyName].Value))
+//          end
+//          else if lValueTypeInfo = TypeInfo(NullableTDate) then
+//          begin
+//            AValue := TValue.From<NullableTDate>(NullableTDate(ISODateToDate(AJSONObject[APropertyName].Value)))
+//          end
+//          else if lValueTypeInfo = TypeInfo(NullableTDateTime) then
+//          begin
+//            AValue := TValue.From<NullableTDateTime>
+//              (NullableTDateTime(ISOTimeStampToDateTime(AJSONObject[APropertyName].Value)))
+//          end
+//          else if lValueTypeInfo = TypeInfo(NullableTTime) then
+//          begin
+//            AValue := TValue.From<NullableTTime>(NullableTTime(ISOTimeToTime(AJSONObject[APropertyName].Value)))
+//          end
+//          else if lValueTypeInfo = TypeInfo(NullableTGUID) then
+//          begin
+//            AValue := TValue.From<NullableTGUID>(TMVCGuidHelper.StringToGUIDEx(AJSONObject[APropertyName].Value));
+//          end
+//          else
+//            raise EMVCSerializationException.CreateFmt('Cannot deserialize property "%s" from string', [APropertyName]);
+//        end
+//        else if (AValue.Kind = tkEnumeration) then
+//        begin
+//          LEnumSerType := estEnumName;
+//          LEnumMappedValues := nil;
+//          if TMVCSerializerHelper.AttributeExists<MVCEnumSerializationAttribute>(ACustomAttributes, LEnumAsAttr) then
+//          begin
+//            LEnumSerType := LEnumAsAttr.SerializationType;
+//            LEnumMappedValues := LEnumAsAttr.MappedValues;
+//          end;
+//
+//          if LEnumSerType = estEnumName then
+//          begin
+//            TValue.Make(GetEnumValue(AValue.TypeInfo, AJSONObject[APropertyName].Value), AValue.TypeInfo, AValue)
+//          end
+//          else
+//          begin
+//            LMappedValueIndex := LEnumMappedValues.IndexOf(AJSONObject[APropertyName].Value);
+//            if LMappedValueIndex < 0 then
+//              raise EMVCSerializationException.CreateFmt('Cannot deserialize property "%s" from mapped values',
+//                [APropertyName]);
+//
+//            TValue.Make(GetEnumValue(AValue.TypeInfo, GetEnumName(AValue.TypeInfo, LMappedValueIndex)),
+//              AValue.TypeInfo, AValue)
+//          end;
+//        end
+//        else if (AValue.Kind = tkInteger) and (TryStrToInt(AJSONObject[APropertyName].Value, lOutInteger)) then
+//        begin
+//          AValue := lOutInteger;
+//        end
+//        else if (AValue.Kind = tkInt64) and (TryStrToInt64(AJSONObject[APropertyName].Value, lOutInteger64)) then
+//        begin
+//          AValue := lOutInteger64;
+//        end
+//        else if lValueTypeInfo.Kind = tkSet then
+//        begin
+//          lInt := StringToSet(AValue.TypeInfo, StringReplace(AJSONObject[APropertyName].Value, ' ', '',
+//            [rfReplaceAll]));
+//          TValue.Make(lInt, AValue.TypeInfo, AValue);
+//        end
+//        else
+//        begin
+//          AValue := TValue.From<string>(AJSONObject[APropertyName].Value);
+//        end;
       end;
 
     jdtInt:
@@ -2079,6 +2118,132 @@ begin
   end;
 end;
 
+procedure TMVCJsonDataObjectsSerializer.JsonObjectToDataSet(
+  const AJSONObject: TJDOJsonObject; const ADataSet: TDataSet;
+  const SerializationMetaInfo: TSerializationMetaInfo);
+var
+  Field: TField;
+  lName: string;
+  SS: TStringStream;
+  SM: TMemoryStream;
+  NestedDataSet: TDataSet;
+begin
+  if (ADataSet.State in [dsInsert, dsEdit]) then
+  begin
+    for Field in ADataSet.Fields do
+    begin
+      if SerializationMetaInfo.FieldsMetaInfo[Field.Index].Ignored then
+      begin
+        Continue;
+      end;
+  //    lName := GetNameAs(ADataSet.Owner, Field.Name, Field.FieldName);
+
+//      if (IsIgnoredAttribute(AIgnoredFields, lName)) or (IsIgnoredComponent(ADataSet.Owner, Field.Name)) then
+//        continue;
+
+//      lName := TMVCSerializerHelper.ApplyNameCase(GetNameCase(ADataSet, ANameCase), lName);
+
+      lName := SerializationMetaInfo.FieldsMetaInfo[Field.Index].NameAs;
+
+      if not AJSONObject.Contains(lName) then
+        continue;
+
+      if (AJSONObject[lName].Typ = jdtObject) and (AJSONObject.Values[lName].ObjectValue = nil) then
+      // Nullable Type
+      begin
+        Field.Clear;
+        continue;
+      end;
+
+      case Field.DataType of
+        TFieldType.ftBoolean:
+          Field.AsBoolean := AJSONObject.B[lName];
+
+        TFieldType.ftInteger, TFieldType.ftSmallint, TFieldType.ftShortint, TFieldType.ftByte, TFieldType.ftLongword,
+          TFieldType.ftWord, TFieldType.ftAutoInc:
+          Field.AsInteger := AJSONObject.I[lName];
+
+        TFieldType.ftLargeint:
+          Field.AsLargeInt := AJSONObject.L[lName];
+
+        TFieldType.ftCurrency:
+          Field.AsCurrency := AJSONObject.F[lName];
+
+        TFieldType.ftSingle:
+          Field.AsSingle := AJSONObject.F[lName];
+
+        TFieldType.ftFloat, TFieldType.ftFMTBcd, TFieldType.ftBCD:
+          Field.AsFloat := AJSONObject.F[lName];
+
+        ftString, ftWideString, ftMemo, ftWideMemo:
+          Field.AsWideString := AJSONObject.S[lName];
+
+        TFieldType.ftDate:
+          Field.AsDateTime := ISODateToDate(AJSONObject.S[lName]);
+
+        TFieldType.ftDateTime, TFieldType.ftTimeStamp:
+          Field.AsDateTime := ISOTimeStampToDateTime(AJSONObject.S[lName]);
+
+        TFieldType.ftTime:
+          Field.AsDateTime := ISOTimeToTime(AJSONObject.S[lName]);
+
+{$IFDEF TOKYOORBETTER}
+        TFieldType.ftGuid:
+          Field.AsGuid := StringToGUID(AJSONObject.S[lName]);
+{$ENDIF}
+        TFieldType.ftGraphic, TFieldType.ftBlob, TFieldType.ftStream:
+          begin
+            SS := TStringStream.Create(AJSONObject.S[lName]);
+            try
+              SS.Position := 0;
+              SM := TMemoryStream.Create;
+              try
+                TMVCSerializerHelper.DecodeStream(SS, SM);
+                TBlobField(Field).LoadFromStream(SM);
+              finally
+                SM.Free;
+              end;
+            finally
+              SS.Free;
+            end;
+          end;
+
+        TFieldType.ftDataSet:
+          begin
+            NestedDataSet := TDataSetField(Field).NestedDataSet;
+
+            NestedDataSet.First;
+            while not NestedDataSet.Eof do
+              NestedDataSet.Delete;
+
+            case GetDataType(ADataSet.Owner, Field.Name, dtArray) of
+              dtArray:
+                begin
+                  JsonArrayToDataSet(
+                    AJSONObject.A[lName],
+                    NestedDataSet,
+                    SerializationMetaInfo.IgnoredFields,
+                    SerializationMetaInfo.NameCase);
+                end;
+              dtObject:
+                begin
+                  NestedDataSet.Edit;
+                  JsonObjectToDataSet(
+                    AJSONObject.O[lName],
+                    NestedDataSet,
+                    SerializationMetaInfo.IgnoredFields,
+                    SerializationMetaInfo.NameCase);
+                  NestedDataSet.Post;
+                end;
+            end;
+          end;
+      else
+        raise EMVCDeserializationException.CreateFmt('Cannot find type for field "%s"', [Field.FieldName]);
+      end;
+    end;
+  end;
+end;
+
 procedure TMVCJsonDataObjectsSerializer.JsonObjectToDataSet(const AJSONObject: TJDOJsonObject; const ADataSet: TDataSet;
   const AIgnoredFields: TMVCIgnoredList; const ANameCase: TMVCNameCase);
 var
@@ -2097,7 +2262,7 @@ begin
       if (IsIgnoredAttribute(AIgnoredFields, lName)) or (IsIgnoredComponent(ADataSet.Owner, Field.Name)) then
         continue;
 
-      lName := TMVCSerializerHelper.ApplyNameCase(GetNameCase(ADataSet, ANameCase), lName { Field.FieldName } );
+      lName := TMVCSerializerHelper.ApplyNameCase(GetNameCase(ADataSet, ANameCase), lName);
 
       if not AJSONObject.Contains(lName) then
         continue;
@@ -2313,7 +2478,7 @@ begin
   lTypeSize := RTTIType.TypeSize;
   GetMem(Buffer, lTypeSize);
   FillChar(Buffer^, lTypeSize, 0);
-{$IF Defined(RIOORBETTER)}
+{$IF Defined(SYDNEYORBETTER)}
   InvokeRecordInitializer(Buffer, RTTIType.Handle);
 {$ENDIF}
   lField := nil;
@@ -2367,7 +2532,7 @@ begin
   lTypeSize := RTTIType.TypeSize;
   GetMem(Buffer, lTypeSize);
   FillChar(Buffer^, lTypeSize, 0);
-{$IF Defined(RIOORBETTER)}
+{$IF Defined(SYDNEYORBETTER)}
   InvokeRecordInitializer(Buffer, RTTIType.Handle);
 {$ENDIF}
   lField := nil;
@@ -2758,6 +2923,109 @@ end;
 class function TMVCJsonDataObjectsSerializer.ParseObject(const AString: string): TJDOJsonObject;
 begin
   Result := Parse<TJDOJsonObject>(AString);
+end;
+
+procedure TMVCJsonDataObjectsSerializer.ParseStringAsTValueUsingMetadata(
+  const AStringValue: String;
+  const DestinationTypeInfo: PTypeInfo;
+  const ExceptionHintString: String;
+  const AAttributes: TArray<TCustomAttribute>;
+  var AValue: TValue);
+var
+  lValueTypeInfo: PTypeInfo;
+  LEnumSerType: TMVCEnumSerializationType;
+  LEnumAsAttr: MVCEnumSerializationAttribute;
+  LEnumMappedValues: TList<string>;
+  LMappedValueIndex: Integer;
+  lOutInteger: Integer;
+  lOutInteger64: Int64;
+  lInt: Integer;
+begin
+  lValueTypeInfo := DestinationTypeInfo;
+  if (lValueTypeInfo = System.TypeInfo(TDate)) then
+    AValue := TValue.From<TDate>(ISODateToDate(AStringValue))
+
+  else if (lValueTypeInfo = System.TypeInfo(TDateTime)) then
+    AValue := TValue.From<TDateTime>(ISOTimeStampToDateTime(AStringValue))
+
+  else if (lValueTypeInfo = System.TypeInfo(TTime)) then
+    AValue := TValue.From<TTime>(ISOTimeToTime(AStringValue))
+  else if (lValueTypeInfo.Kind = tkRecord) and (lValueTypeInfo <> TypeInfo(TValue)) then { nullables }
+  begin
+    if lValueTypeInfo = TypeInfo(NullableString) then
+    begin
+      AValue := TValue.From<NullableString>(NullableString(AStringValue))
+    end
+    else if lValueTypeInfo = TypeInfo(NullableTDate) then
+    begin
+      AValue := TValue.From<NullableTDate>(NullableTDate(ISODateToDate(AStringValue)))
+    end
+    else if lValueTypeInfo = TypeInfo(NullableTDateTime) then
+    begin
+      AValue := TValue.From<NullableTDateTime>
+        (NullableTDateTime(ISOTimeStampToDateTime(AStringValue)))
+    end
+    else if lValueTypeInfo = TypeInfo(NullableTTime) then
+    begin
+      AValue := TValue.From<NullableTTime>(NullableTTime(ISOTimeToTime(AStringValue)))
+    end
+    else if lValueTypeInfo = TypeInfo(NullableTGUID) then
+    begin
+      AValue := TValue.From<NullableTGUID>(TMVCGuidHelper.StringToGUIDEx(AStringValue));
+    end
+    else
+    begin
+      raise EMVCSerializationException.CreateFmt('Cannot deserialize "%s" from string', [ExceptionHintString]);
+    end;
+  end
+  else if (lValueTypeInfo.Kind = tkEnumeration) then
+  begin
+    LEnumSerType := estEnumName;
+    LEnumMappedValues := nil;
+    if TMVCSerializerHelper.AttributeExists<MVCEnumSerializationAttribute>(AAttributes, LEnumAsAttr) then
+    begin
+      LEnumSerType := LEnumAsAttr.SerializationType;
+      LEnumMappedValues := LEnumAsAttr.MappedValues;
+    end;
+
+    if LEnumSerType = estEnumName then
+    begin
+      lOutInteger := GetEnumValue(lValueTypeInfo, AStringValue);
+      if lOutInteger = -1 then
+      begin
+        raise EMVCSerializationException.CreateFmt('Cannot deserialize "%s" from mapped values',
+          [ExceptionHintString]);
+      end;
+      TValue.Make(lOutInteger, lValueTypeInfo, AValue)
+    end
+    else
+    begin
+      LMappedValueIndex := LEnumMappedValues.IndexOf(AStringValue);
+      if LMappedValueIndex < 0 then
+        raise EMVCSerializationException.CreateFmt('Cannot deserialize "%s" from mapped values',
+          [ExceptionHintString]);
+
+      TValue.Make(GetEnumValue(lValueTypeInfo, GetEnumName(lValueTypeInfo, LMappedValueIndex)),
+        lValueTypeInfo, AValue)
+    end;
+  end
+  else if (lValueTypeInfo.Kind = tkInteger) and (TryStrToInt(AStringValue, lOutInteger)) then
+  begin
+    AValue := lOutInteger;
+  end
+  else if (lValueTypeInfo.Kind = tkInt64) and (TryStrToInt64(AStringValue, lOutInteger64)) then
+  begin
+    AValue := lOutInteger64;
+  end
+  else if lValueTypeInfo.Kind = tkSet then
+  begin
+    lInt := StringToSet(lValueTypeInfo, StringReplace(AStringValue, ' ', '', [rfReplaceAll]));
+    TValue.Make(lInt, lValueTypeInfo, AValue);
+  end
+  else
+  begin
+    AValue := TValue.From<string>(AStringValue);
+  end;
 end;
 
 procedure TMVCJsonDataObjectsSerializer.RecordToJsonObject(const ARecord: Pointer; const ARecordTypeInfo: PTypeInfo;
@@ -3834,5 +4102,31 @@ class function TJSONUtils.JSONObjectToRecord<T>(const JSONObject: TJsonObject;
 begin
   Result := Serializer.JSONObjectToRecord<T>(JSONObject);
 end;
+
+{ TMVCJsonDataObjectsSerializer.TSerializationMetaInfo }
+
+class function TMVCJsonDataObjectsSerializer.TSerializationMetaInfo.CreateFieldsMetaInfo(
+  const ADataSet: TDataSet; const ANameCase: TMVCNameCase;
+  const AIgnoredFields: TMVCIgnoredList): TSerializationMetaInfo;
+var
+  lField: TField;
+  I: Integer;
+  lName: String;
+begin
+  Result.IgnoredFields := AIgnoredFields;
+  Result.NameCase := ANameCase;
+  SetLength(Result.FieldsMetaInfo, ADataSet.Fields.Count);
+  for I := 0 to ADataSet.FieldCount - 1 do
+  begin
+    lField := ADataSet.Fields[I];
+    lName := GetNameAs(ADataSet.Owner, lField.Name, lField.FieldName);
+    Result.FieldsMetaInfo[I].Ignored := IsIgnoredAttribute(AIgnoredFields, lName)
+      or (IsIgnoredComponent(ADataSet.Owner, lField.Name));
+    Result.FieldsMetaInfo[I].NameAs :=
+      TMVCSerializerHelper.ApplyNameCase(
+        GetNameCase(ADataSet, ANameCase), lName);
+  end;
+end;
+
 
 end.

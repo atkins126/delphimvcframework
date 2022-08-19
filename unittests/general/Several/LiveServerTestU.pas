@@ -90,6 +90,8 @@ type
     [Test]
     procedure TestCustomerEcho;
     [Test]
+    procedure TestEchoWithAllVerbs;
+    [Test]
     procedure TestCustomerEchoBodyFor;
     [Test]
     procedure TestPOSTWithoutContentType;
@@ -320,7 +322,6 @@ type
     [Test]
     procedure TestRequestToNotFoundMethod;
     [Test]
-    [Category('this')]
     procedure TestRequestWithParams_I_I_ret_I;
     [Test]
     procedure TestRequestWithNamedParams_I_I_ret_I;
@@ -370,6 +371,17 @@ type
     procedure TestRequest_Echo_ComplexRecords;
     [Test]
     procedure TestRequest_NoParams_DynamicArrayOfRecordAsResult;
+    //enum tests
+    [Test]
+    procedure TestEnum;
+    [Test]
+    procedure TestInvalidEnum;
+    //set tests
+    [Test]
+    procedure TestSet;
+    [Test]
+    procedure TestInvalidSet;
+
   end;
 
   [TestFixture]
@@ -382,6 +394,7 @@ type
 implementation
 
 uses
+  System.TypInfo,
   System.Math,
   System.JSON,
   MVCFramework.Serializer.Defaults,
@@ -405,7 +418,7 @@ uses
   Vcl.Graphics
 {$ENDIF}
     , TestConstsU, MVCFramework.Tests.Serializer.Entities,
-  MVCFramework.Logger, System.IOUtils;
+  MVCFramework.Logger, System.IOUtils, MVCFramework.Utils;
 
 function GetServer: string;
 begin
@@ -918,6 +931,39 @@ begin
     Assert.isTrue(lPass, 'No session cookie cleanup in the response');
   finally
     lJSON.Free;
+  end;
+end;
+
+procedure TServerTest.TestEchoWithAllVerbs;
+var
+  r: IMVCRESTResponse;
+  lPerson: TPerson;
+  lSer: IMVCSerializer;
+  lNewPerson: TPerson;
+  I: TMVCHTTPMethodType;
+begin
+  lNewPerson := TPerson.Create;
+  try
+    lPerson := TPerson.GetNew('Daniele','Teti', EncodeDate(1979,11,4), True);
+    try
+      lSer := GetDefaultSerializer;
+      for I := httpGET to httpTRACE do
+      begin
+        r := RESTClient
+          .Accept(TMVCMediaType.APPLICATION_JSON)
+          .AddBody(lPerson, False)
+          .Execute(httpGET, '/echowithallverbs');
+        Assert.AreEqual(HTTP_STATUS.OK, r.StatusCode);
+          r.BodyFor(lNewPerson);
+          Assert.IsTrue(lPerson.Equals(lNewPerson),
+            GetEnumName(TypeInfo(TMVCHTTPMethodType),
+              Ord(I)) + ' doesn''t return the same object data');
+      end;
+    finally
+      lPerson.Free;
+    end;
+  finally
+    lNewPerson.Free;
   end;
 end;
 
@@ -2634,12 +2680,22 @@ begin
   end;
 end;
 
+procedure TJSONRPCServerTest.TestEnum;
+begin
+  var lRequest1: IJSONRPCRequest := TJSONRPCRequest.Create(1234, 'ProcessEnums');
+  lRequest1.Params.Add('etValue1');
+  lRequest1.Params.Add('etValue2');
+  var lResp := FExecutor2.ExecuteRequest(lRequest1);
+  Assert.AreEqual(
+    GetEnumValue(TypeInfo(TEnumTest), 'etValue2'),
+    GetEnumValue(TypeInfo(TEnumTest), lResp.Result.AsString)
+    );
+end;
+
 procedure TJSONRPCServerTest.TestHooks;
 begin
-  var
-    lRequest1: IJSONRPCRequest := TJSONRPCRequest.Create(1234, 'request1');
-  var
-  lResp := FExecutor3.ExecuteRequest(lRequest1);
+  var lRequest1: IJSONRPCRequest := TJSONRPCRequest.Create(1234, 'request1');
+  var lResp := FExecutor3.ExecuteRequest(lRequest1);
   Assert.areEqual('OnBeforeRoutingHook|OnBeforeCallHook|OnAfterCallHook',
     FExecutor3.HTTPResponse.HeaderValue['x-history']);
 end;
@@ -2744,12 +2800,29 @@ end;
 
 procedure TJSONRPCServerTest.TestHooksWhenOnBeforeRoutingHookRaisesError;
 begin
-  var
-    lRequest1: IJSONRPCRequest := TJSONRPCRequest.Create(1234, 'error_OnBeforeRoutingHook');
-  var
-  lResp := FExecutor3.ExecuteRequest(lRequest1);
+  var lRequest1: IJSONRPCRequest := TJSONRPCRequest.Create(1234, 'error_OnBeforeRoutingHook');
+  var lResp := FExecutor3.ExecuteRequest(lRequest1);
   Assert.isTrue(lResp.IsError, lResp.ToString(true));
   Assert.areEqual(lResp.Error.ErrMessage, 'error_OnBeforeRoutingHook');
+end;
+
+procedure TJSONRPCServerTest.TestInvalidEnum;
+begin
+  var lRequest1: IJSONRPCRequest := TJSONRPCRequest.Create(1234, 'ProcessEnums');
+  lRequest1.Params.Add('etValue1');
+  lRequest1.Params.Add('blabla');  //invalid enum value
+  var lResp := FExecutor2.ExecuteRequest(lRequest1);
+  Assert.IsTrue(lResp.IsError);
+end;
+
+procedure TJSONRPCServerTest.TestInvalidSet;
+begin
+  var lRequest1: IJSONRPCRequest := TJSONRPCRequest.Create(1234, 'ProcessSets');
+  lRequest1.Params.Add('etValue1,blabla');
+  lRequest1.Params.Add('etValue3');
+  var lResp := FExecutor2.ExecuteRequest(lRequest1);
+  var l := lResp.AsJSONString;
+  Assert.IsTrue(lResp.IsError);
 end;
 
 procedure TJSONRPCServerTest.TestNotificationWhichRaisesError;
@@ -3141,6 +3214,16 @@ begin
 
   lRPCResp := FExecutor2.ExecuteRequest(lReq);
   Assert.areEqual('DanieleDanieleDanieleDaniele', lRPCResp.Result.AsString);
+end;
+
+procedure TJSONRPCServerTest.TestSet;
+begin
+  var lRequest1: IJSONRPCRequest := TJSONRPCRequest.Create(1234, 'ProcessSets');
+  lRequest1.Params.Add('etValue1,etValue2');
+  lRequest1.Params.Add('etValue3');
+  var lResp := FExecutor2.ExecuteRequest(lRequest1);
+  var l := lResp.AsJSONString;
+  Assert.AreEqual('etValue1,etValue2,etValue3', lResp.Result.AsString);
 end;
 
 { TJSONRPCServerWithGETTest }
