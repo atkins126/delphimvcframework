@@ -2,7 +2,7 @@
 //
 // Delphi MVC Framework
 //
-// Copyright (c) 2010-2022 Daniele Teti and the DMVCFramework Team
+// Copyright (c) 2010-2023 Daniele Teti and the DMVCFramework Team
 //
 // https://github.com/danieleteti/delphimvcframework
 //
@@ -232,16 +232,12 @@ begin
   inherited Destroy;
 end;
 
-// class procedure TMVCSessionFactory.DestroyInstance;
-// begin
-// if Assigned(cInstance) then
-// cInstance.Free;
-// end;
-
 class function TMVCSessionFactory.GetInstance: TMVCSessionFactory;
 begin
   if not Assigned(cInstance) then
+  begin
     cInstance := TMVCSessionFactory.Create;
+  end;
   Result := cInstance;
 end;
 

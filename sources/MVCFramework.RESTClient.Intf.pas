@@ -2,7 +2,7 @@
 //
 // Delphi MVC Framework
 //
-// Copyright (c) 2010-2022 Daniele Teti and the DMVCFramework Team
+// Copyright (c) 2010-2023 Daniele Teti and the DMVCFramework Team
 //
 // https://github.com/danieleteti/delphimvcframework
 //
@@ -69,6 +69,9 @@ type
     function ProxyUsername: string; overload;
     function ProxyPassword(const aProxyPassword: string): IMVCRESTClient; overload;
     function ProxyPassword: string; overload;
+    function ProxyScheme(const aProxyScheme: string): IMVCRESTClient; overload;
+    function ProxyScheme: string; overload;
+
 
 {$IF defined(TOKYOORBETTER)}
     function SecureProtocols(const aSecureProtocols: THTTPSecureProtocols): IMVCRESTClient; overload;
@@ -295,6 +298,10 @@ type
     /// </param>
     function AddFile(const aName, aFileName: string; const aContentType: string = ''): IMVCRESTClient; overload;
     function AddFile(const aFileName: string; const aContentType: string = ''): IMVCRESTClient; overload;
+{$IF defined(RIOORBETTER)}
+    function AddFile(const aName: string; aFileStreamValue: TStream; const aFileName: string = '';
+      const aContentType: string = ''): IMVCRESTClient; overload;
+{$ENDIF}
     function AddBodyFieldFormData(const aName, aValue: string): IMVCRESTClient; overload;
 {$IF defined(RIOORBETTER)}
     function AddBodyFieldFormData(const aName: string; aStreamValue: TStream;
@@ -474,7 +481,7 @@ type
     function Headers: TStrings;
     function HeaderValue(const aName: string): string;
     function Cookies: TCookies;
-    function CookieByName(const aName: string): TCookie;
+    function CookieByName(const aName: string; const RaiseExceptionIfNotFound: Boolean = False): TCookie;
     function Server: string;
     function ContentType: string;
     function ContentEncoding: string;
