@@ -2,7 +2,7 @@
 //
 // Delphi MVC Framework
 //
-// Copyright (c) 2010-2023 Daniele Teti and the DMVCFramework Team
+// Copyright (c) 2010-2024 Daniele Teti and the DMVCFramework Team
 //
 // https://github.com/danieleteti/delphimvcframework
 //
@@ -43,7 +43,10 @@ type
   TLogLevel = (levDebug = 0, levNormal = 1, levWarning = 2, levError = 3, levException = 4);
 
 {$IF Defined(SYDNEYORBETTER)}
+const
+  PROFILER_LOG_TYPE: array [false..true] of TLogType = (TLogType.Info, TLogType.Warning);
 
+type
   Profiler = record
   private
     fMessage: string;
@@ -58,6 +61,9 @@ type
     class var LoggerTag: String;
     class var WarningThreshold: UInt32;
     class var LogsOnlyIfOverThreshold: Boolean;
+    // Trace
+    class procedure Trace(const Message: String; Proc: TProc; const WarningThreshold: UInt32); overload; static;
+    class function Trace<T>(const Message: String; Func: TFunc<T>; const WarningThreshold: UInt32): T; overload; static;
   end;
 {$ENDIF}
 
@@ -75,6 +81,9 @@ procedure LogW(AMessage: string); overload;
 procedure LogW(AObject: TObject); overload;
 
 procedure LogE(AMessage: string);
+
+procedure LogF(AMessage: string);
+
 procedure Log(LogLevel: TLogLevel; const AMessage: string); overload;
 
 procedure LogException(const E: Exception; const AMessage: String);
@@ -96,10 +105,19 @@ procedure InitThreadVars;
 
 var
   LogLevelLimit: TLogLevel = TLogLevel.levNormal;
+  UseConsoleLogger: Boolean = True;
 
 implementation
 
 uses
+  {$IF Defined(MSWINDOWS)}
+  LoggerPro.ConsoleAppender,
+  {$ELSE}
+  {$IF Not Defined(MOBILE)}
+  LoggerPro.SimpleConsoleAppender, //only for linux
+  {$ENDIF}
+  {$ENDIF}
+  LoggerPro.Renderers,
   System.IOUtils,
   MVCFramework.Serializer.JsonDataObjects,
   MVCFramework.DuckTyping;
@@ -109,8 +127,6 @@ threadvar
   gIndent: NativeUInt;
   gReqNr: NativeUInt;
 
-const
-  PROFILER_LOG_TYPE: array [false..true] of TLogType = (TLogType.Info, TLogType.Warning);
 {$ENDIF}
 
 var
@@ -189,9 +205,14 @@ begin
     Log.Error(AMessage, LOGGERPRO_TAG);
 end;
 
+procedure LogF(AMessage: string);
+begin
+    Log.Fatal(AMessage, LOGGERPRO_TAG);
+end;
+
 procedure LogException(const E: Exception; const AMessage: String);
 begin
-    LogE(E.ClassName + ': ' + AMessage);
+    LogE(E.ClassName + ': ' + E.Message + ' - (Custom Message: ' + AMessage + ')');
 end;
 
 procedure LogEnterMethod(const AMethodName: string);
@@ -272,7 +293,6 @@ begin
         else
         begin
           InitializeDefaultLogger;
-          Log.Info('Default Logger initialized', LOGGERPRO_TAG);
         end;
       end;
     finally
@@ -281,9 +301,13 @@ begin
   end;
 end;
 
+
+
 procedure InitializeDefaultLogger;
 var
   lLogsFolder: String;
+  lFileAppender, lConsoleAppender: ILogAppender;
+  lAppenders: TArray<ILogAppender>;
 begin
     { This procedure must be called in a synchronized context
       (Normally only SetDefaultLogger should be the caller) }
@@ -294,9 +318,26 @@ begin
 {$ELSE}
       lLogsFolder := TPath.Combine(TPath.GetDocumentsPath, 'logs');
 {$ENDIF}
-      gDefaultLogger := BuildLogWriter([TLoggerProFileAppender.Create(5, 2000, lLogsFolder)]);
+      lFileAppender := TLoggerProFileAppender.Create(5, 10000, lLogsFolder);
+      if IsConsole and UseConsoleLogger then
+      begin
+        {$IF Defined(MSWINDOWS)}
+        lConsoleAppender := TLoggerProConsoleAppender.Create(TLogItemRendererNoTag.Create);
+        {$ELSE}
+        {$IF Not Defined(MOBILE)}
+        lConsoleAppender := TLoggerProSimpleConsoleAppender.Create(TLogItemRendererNoTag.Create);
+        {$ENDIF}
+        {$ENDIF}
+        lAppenders := [lFileAppender, lConsoleAppender];
+      end
+      else
+      begin
+        lAppenders := [lFileAppender];
+      end;
+      gDefaultLogger := BuildLogWriter(lAppenders);
     end;
 end;
+
 
 procedure ReleaseGlobalLogger;
 begin
@@ -382,6 +423,47 @@ constructor Profiler.Start(const Message: string);
 begin
   Start(Message, []);
 end;
+
+class function Profiler.Trace<T>(const Message: String; Func: TFunc<T>; const WarningThreshold: UInt32): T;
+var
+  lStopWatch: TStopWatch;
+begin
+  lStopWatch := TStopWatch.StartNew;
+  Result := Func(); //do not put try/except here. If exception raises the timing is a nonsense
+  lStopWatch.Stop;
+  if lStopWatch.ElapsedMilliseconds >= WarningThreshold then
+  begin
+    ProfileLogger.Log(
+      PROFILER_LOG_TYPE[True],
+      '[%s][ELAPSED: %s][TRACE][THRESHOLD %d ms]',
+      [
+        Message,
+        lStopWatch.Elapsed.ToString,
+        WarningThreshold
+      ], LoggerTag);
+  end;
+end;
+
+class procedure Profiler.Trace(const Message: String; Proc: TProc; const WarningThreshold: UInt32);
+var
+  lStopWatch: TStopWatch;
+begin
+  lStopWatch := TStopWatch.StartNew;
+  Proc(); //do not put try/except here. If exception raises the timing is a nonsense
+  lStopWatch.Stop;
+  if lStopWatch.ElapsedMilliseconds >= WarningThreshold then
+  begin
+    ProfileLogger.Log(
+      PROFILER_LOG_TYPE[True],
+      '[%s][ELAPSED: %s][TRACE][THRESHOLD %d ms]',
+      [
+        Message,
+        lStopWatch.Elapsed.ToString,
+        WarningThreshold
+      ], LoggerTag);
+  end;
+end;
+
 {$ENDIF}
 
 procedure InitThreadVars;

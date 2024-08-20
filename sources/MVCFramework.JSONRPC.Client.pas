@@ -2,7 +2,7 @@
 //
 // Delphi MVC Framework
 //
-// Copyright (c) 2010-2023 Daniele Teti and the DMVCFramework Team
+// Copyright (c) 2010-2024 Daniele Teti and the DMVCFramework Team
 //
 // https://github.com/danieleteti/delphimvcframework
 //
@@ -74,7 +74,9 @@ type
     function SetOnSendCommand(const aOnSendCommandProc: TProc<IJSONRPCObject>): IMVCJSONRPCExecutor;
     function SetOnReceiveHTTPResponse(const aOnReceiveHTTPResponse: TProc<IHTTPResponse>): IMVCJSONRPCExecutor;
     //end events
-
+    function CreateRequest(const MethodName: String; const RequestID: UInt64): IJSONRPCRequest; overload;
+    function CreateRequest(const MethodName: String; const RequestID: String): IJSONRPCRequest; overload;
+    function CreateNotification(const MethodName: String): IJSONRPCNotification;
   end;
 
   IMVCJSONRPCExecutorAsync = interface
@@ -110,6 +112,9 @@ type
     function SetOnValidateServerCertificate(const aOnValidateServerCertificate: TValidateCertificateEvent)
       : IMVCJSONRPCExecutor;
     //events
+    function CreateRequest(const MethodName: String; const RequestID: UInt64): IJSONRPCRequest; overload;
+    function CreateRequest(const MethodName: String; const RequestID: String): IJSONRPCRequest; overload;
+    function CreateNotification(const MethodName: String): IJSONRPCNotification;
     //async
     function SetOnReceiveResponseAsync(const aOnReceiveResponseAsyncProc: TProc<IJSONRPCObject, IJSONRPCObject>)
       : IMVCJSONRPCExecutor;
@@ -205,6 +210,9 @@ type
     procedure AddHTTPHeader(const aNetHeader: TNetHeader);
     procedure ClearHTTPHeaders;
     function HTTPHeadersCount: Integer;
+    function CreateRequest(const MethodName: String; const RequestID: UInt64): IJSONRPCRequest; overload;
+    function CreateRequest(const MethodName: String; const RequestID: String): IJSONRPCRequest; overload;
+    function CreateNotification(const MethodName: String): IJSONRPCNotification;
     //events
     //sync
     function SetOnReceiveData(const aOnReceiveData: TReceiveDataEvent): IMVCJSONRPCExecutor;
@@ -282,6 +290,7 @@ end;
 function TMVCJSONRPCExecutor.ConfigureHTTPClient(const aConfigProc: TProc<THTTPClient>): IMVCJSONRPCExecutor;
 begin
   aConfigProc(fHTTP);
+  Result := Self;
 end;
 
 constructor TMVCJSONRPCExecutor.Create(const aURL: string; const aRaiseExceptionOnError: Boolean = True;
@@ -300,6 +309,24 @@ begin
     .SetOnReceiveData(nil)
     .SetOnNeedClientCertificate(nil)
     .SetOnValidateServerCertificate(nil);
+end;
+
+function TMVCJSONRPCExecutor.CreateNotification(
+  const MethodName: String): IJSONRPCNotification;
+begin
+  Result := TJSONRPCNotification.Create(MethodName);
+end;
+
+function TMVCJSONRPCExecutor.CreateRequest(const MethodName,
+  RequestID: String): IJSONRPCRequest;
+begin
+  Result := TJSONRPCRequest.Create(RequestID, MethodName);
+end;
+
+function TMVCJSONRPCExecutor.CreateRequest(const MethodName: String;
+  const RequestID: UInt64): IJSONRPCRequest;
+begin
+  Result := TJSONRPCRequest.Create(RequestID, MethodName);
 end;
 
 destructor TMVCJSONRPCExecutor.Destroy;
@@ -488,6 +515,7 @@ procedure TMVCJSONRPCExecutor.InternalExecuteAsync(
 var
   lCustomHeaders: TNetHeaders;
   lProc: TProc;
+  lURL: String;
 begin
   lCustomHeaders := [];
   if Assigned(fHTTPRequestHeaders) then
@@ -495,6 +523,8 @@ begin
     lCustomHeaders := fHTTPRequestHeaders.ToArray;
   end;
 
+
+  lURL := fURL;
   lProc := procedure
   var
     lSS: TStringStream;
@@ -527,13 +557,13 @@ begin
             case UseVerb of
               jrpcPOST, jrpcDefault:
                 begin
-                  lHttpResp := lHTTP.Post(fURL + aEndPoint, lSS, nil,
+                  lHttpResp := lHTTP.Post(lURL + aEndPoint, lSS, nil,
                     [TNetHeader.Create('content-type', 'application/json;charset=utf8'), TNetHeader.Create('accept',
                     'application/json;charset=utf8')] + lCustomHeaders);
                 end;
               jrpcGET:
                 begin
-                  lHttpResp := lHTTP.Get(fURL + aEndPoint + '?' + GetQueryStringParameters(AJSONRPCObject), nil,
+                  lHttpResp := lHTTP.Get(lURL + aEndPoint + '?' + GetQueryStringParameters(AJSONRPCObject), nil,
                     [TNetHeader.Create('accept', 'application/json;charset=utf8')] + lCustomHeaders);
                 end;
             end;

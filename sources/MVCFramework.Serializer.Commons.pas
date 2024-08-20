@@ -2,7 +2,7 @@
 //
 // Delphi MVC Framework
 //
-// Copyright (c) 2010-2023 Daniele Teti and the DMVCFramework Team
+// Copyright (c) 2010-2024 Daniele Teti and the DMVCFramework Team
 //
 // https://github.com/danieleteti/delphimvcframework
 //
@@ -48,7 +48,8 @@ uses
   MVCFramework.Commons,
   Data.DB,
   System.Generics.Collections,
-  JsonDataObjects, MVCFramework.DuckTyping;
+  JsonDataObjects,
+  MVCFramework.DuckTyping;
 
 type
   EMVCSerializationException = class(EMVCException)
@@ -59,7 +60,7 @@ type
 
   TMVCSerializationType = (stUnknown, stDefault, stProperties, stFields);
 
-  TMVCNameCase = (ncAsIs, ncUpperCase, ncLowerCase, ncCamelCase, ncPascalCase, ncSnakeCase);
+  TMVCNameCase = (ncUseDefault {ncUseDefault must be the first item}, ncAsIs, ncUpperCase, ncLowerCase, ncCamelCase, ncPascalCase, ncSnakeCase);
 
   TMVCDataType = (dtObject, dtArray);
 
@@ -94,12 +95,9 @@ type
   end;
 
   MVCSerializeAsStringAttribute = class(TCustomAttribute)
-  private
-    { private declarations }
-  protected
-    { protected declarations }
-  public
-    { public declarations }
+  end;
+
+  MVCSerializeAsSqidsAttribute = class(TCustomAttribute)
   end;
 
   MVCNameCaseAttribute = class(TCustomAttribute)
@@ -123,7 +121,7 @@ type
     { protected declarations }
   public
     constructor Create(const AName: string; const Fixed: Boolean = False);
-    property name: string read fName;
+    property Name: string read fName;
     property Fixed: Boolean read fFixed;
   end;
 
@@ -161,6 +159,7 @@ type
     property SerializationType: TMVCSerializationType read FSerializationType;
   end;
 
+  //Used by TDataSetUtils
   MVCColumnAttribute = class(TCustomAttribute)
   private
     FFieldName: string;
@@ -205,7 +204,7 @@ type
   private
     { private declarations }
   public
-    class function ApplyNameCase(const NameCase: TMVCNameCase; const Value: string): string; static;
+    class function ApplyNameCase(NameCase: TMVCNameCase; const Value: string): string; static; inline;
     class function GetKeyName(const AField: TRttiField; const AType: TRttiType): string;
       overload; static;
     class function GetKeyName(const AProperty: TRttiProperty; const AType: TRttiType): string;
@@ -214,9 +213,9 @@ type
     class function HasAttribute<T: class>(const AMember: TRttiObject; out AAttribute: T): Boolean;
       overload; static;
     class function AttributeExists<T: TCustomAttribute>(const AAttributes: TArray<TCustomAttribute>;
-      out AAttribute: T): Boolean; overload; static;
+      out AAttribute: T): Boolean; overload; static; inline;
     class function AttributeExists<T: TCustomAttribute>(const AAttributes: TArray<TCustomAttribute>)
-      : Boolean; overload; static;
+      : Boolean; overload; static; inline;
 
     class procedure EncodeStream(AInput, AOutput: TStream); static;
     class procedure DecodeStream(AInput, AOutput: TStream); static;
@@ -245,14 +244,14 @@ type
   end;
 
   // Well Known Response Objects
-  [MVCNameCase(ncLowerCase)]
+  [MVCNameCase(ncUseDefault)]
   TMVCResponseBase = class abstract(TInterfacedObject, IMVCResponseData)
   protected
     function GetMetadata: TMVCStringDictionary; virtual; abstract;
     function GetData: TObject; virtual; abstract;
   end;
 
-  [MVCNameCase(ncLowerCase)]
+  [MVCNameCase(ncUseDefault)]
   TMVCTask = class
   private
     fID: string;
@@ -263,7 +262,7 @@ type
     constructor Create(const HREF, ID: string);
   end;
 
-  [MVCNameCase(ncLowerCase)]
+  [MVCNameCase(ncUseDefault)]
   TMVCAcceptedResponse = class(TMVCResponseBase)
   private
     fTask: TMVCTask;
@@ -274,7 +273,7 @@ type
     destructor Destroy; override;
   end;
 
-  [MVCNameCase(ncLowerCase)]
+  [MVCNameCase(ncUseDefault)]
   TMVCResponseData = class(TMVCResponseBase, IMVCResponseData)
   private
     fData: TObject;
@@ -318,7 +317,7 @@ type
     function Add(const Name: string; const Value: TDataset;
       const SerializationAction: TMVCDataSetSerializationAction = nil;
       const DataSetSerializationType: TMVCDatasetSerializationType = dstAllRecords;
-      const NameCase: TMVCNameCase = TMVCNameCase.ncLowerCase;
+      const NameCase: TMVCNameCase = TMVCNameCase.ncUseDefault;
       const AIgnoredFields: TMVCIgnoredList = nil): IMVCObjectDictionary; overload;
     function TryGetValue(const Name: string; out Value: TObject): Boolean; overload;
     function Count: Integer;
@@ -380,7 +379,7 @@ type
     function Add(const Name: string; const Value: TDataset;
       const SerializationAction: TMVCDataSetSerializationAction = nil;
       const DataSetSerializationType: TMVCDatasetSerializationType = dstAllRecords;
-      const NameCase: TMVCNameCase = TMVCNameCase.ncLowerCase;
+      const NameCase: TMVCNameCase = TMVCNameCase.ncUseDefault;
       const AIgnoredFields: TMVCIgnoredList = nil): IMVCObjectDictionary; overload;
     function TryGetValue(const Name: string; out Value: TObject): Boolean; overload;
     function Count: Integer;
@@ -420,6 +419,9 @@ var
   /// </example>
   gLocalTimeStampAsUTC: Boolean;
 
+var
+  MVCNameCaseDefault: TMVCNameCase = TMVCNameCase.ncLowerCase;
+
 function DateTimeToISOTimeStamp(const ADateTime: TDateTime): string;
 function DateToISODate(const ADate: TDateTime): string;
 function TimeToISOTime(const ATime: TTime): string;
@@ -441,7 +443,7 @@ function ISODateToDate(const ADate: string): TDate;
 function ISOTimeToTime(const ATime: string): TTime;
 
 const
-  JSONNameLowerCase = ncLowerCase deprecated 'Use MVCNameCaseAttribute(ncLowerCase)';
+  JSONNameLowerCase = TMVCNameCase.ncLowerCase deprecated 'Use MVCNameCaseAttribute(ncLowerCase)';
   JSONNameUpperCase = ncUpperCase deprecated 'Use MVCNameCaseAttribute(ncUpperCase)';
 
 function StrDict: TMVCStringDictionary; overload;
@@ -457,6 +459,7 @@ implementation
 
 uses
   Data.FmtBcd,
+  Data.SqlTimSt,
   MVCFramework.Nullables,
   System.Generics.Defaults;
 
@@ -655,36 +658,41 @@ begin
   Result := (AAttribute <> nil);
 end;
 
-class function TMVCSerializerHelper.ApplyNameCase(const NameCase: TMVCNameCase;
+class function TMVCSerializerHelper.ApplyNameCase(NameCase: TMVCNameCase;
   const Value: string): string;
 begin
+  if NameCase = TMVCNameCase.ncUseDefault then
+  begin
+    NameCase := MVCNameCaseDefault;
+  end;
+
   case NameCase of
-    ncUpperCase:
+    TMVCNameCase.ncUpperCase:
       begin
         Result := UpperCase(Value);
       end;
-    ncLowerCase:
+    TMVCNameCase.ncLowerCase:
       begin
         Result := LowerCase(Value);
       end;
-    ncCamelCase:
+    TMVCNameCase.ncCamelCase:
       begin
         Result := CamelCase(Value);
       end;
-    ncPascalCase:
+    TMVCNameCase.ncPascalCase:
       begin
         Result := CamelCase(Value, True);
       end;
-    ncSnakeCase:
+    TMVCNameCase.ncSnakeCase:
       begin
         Result := SnakeCase(Value);
       end;
-    ncAsIs:
+    TMVCNameCase.ncAsIs:
       begin
         Result := Value;
       end
   else
-    raise Exception.Create('Invalid NameCase');
+    raise Exception.Create('Unknown TMVCNameCase: ' + GetEnumName(TypeInfo(TMVCNameCase), Ord(NameCase)));
   end;
 end;
 
@@ -748,8 +756,11 @@ class procedure TMVCSerializerHelper.DecodeStream(AInput, AOutput: TStream);
 begin
 
 {$IFDEF SYSTEMNETENCODING}
+{$IFDEF ALEXANDRIAORBETTER}
+  TNetEncoding.Base64String.Decode(AInput, AOutput);
+{$ELSE}
   TNetEncoding.Base64.Decode(AInput, AOutput);
-
+{$ENDIF}
 {$ELSE}
   Soap.EncdDecd.DecodeStream(AInput, AOutput);
 
@@ -760,11 +771,13 @@ class function TMVCSerializerHelper.DecodeString(const AInput: string): string;
 begin
 
 {$IFDEF SYSTEMNETENCODING}
+{$IFDEF ALEXANDRIAORBETTER}
+  Result := TNetEncoding.Base64String.Decode(AInput);
+{$ELSE}
   Result := TNetEncoding.Base64.Decode(AInput);
-
+{$ENDIF}
 {$ELSE}
   Result := Soap.EncdDecd.DecodeString(AInput);
-
 {$ENDIF}
 end;
 
@@ -772,8 +785,11 @@ class procedure TMVCSerializerHelper.EncodeStream(AInput, AOutput: TStream);
 begin
 
 {$IFDEF SYSTEMNETENCODING}
+{$IFDEF ALEXANDRIAORBETTER}
+  TNetEncoding.Base64String.Encode(AInput, AOutput);
+{$ELSE}
   TNetEncoding.Base64.Encode(AInput, AOutput);
-
+{$ENDIF}
 {$ELSE}
   Soap.EncdDecd.EncodeStream(AInput, AOutput);
 
@@ -784,8 +800,11 @@ class function TMVCSerializerHelper.EncodeString(const AInput: string): string;
 begin
 
 {$IFDEF SYSTEMNETENCODING}
+{$IFDEF ALEXANDRIAORBETTER}
+  Result := TNetEncoding.Base64String.Encode(AInput);
+{$ELSE}
   Result := TNetEncoding.Base64.Encode(AInput);
-
+{$ENDIF}
 {$ELSE}
   Result := Soap.EncdDecd.EncodeString(AInput);
 
@@ -819,14 +838,14 @@ begin
     end;
   end;
 
-  Attrs := AType.GetAttributes;
-  for Attr in Attrs do
+  for Attr in AType.GetAttributes do
   begin
     if Attr is MVCNameCaseAttribute then
     begin
       Exit(TMVCSerializerHelper.ApplyNameCase(MVCNameCaseAttribute(Attr).KeyCase, Result));
     end;
   end;
+  Result := TMVCSerializerHelper.ApplyNameCase(MVCNameCaseDefault, Result);
 end;
 
 class function TMVCSerializerHelper.GetTypeKindAsString(const ATypeKind: TTypeKind): string;
@@ -1068,6 +1087,7 @@ var
   lInternalStream: TStream;
   lSStream: TStringStream;
   lValue: TValue;
+  lTmpValue: TValue;
   lStrValue: string;
 {$IF not Defined(TokyoOrBetter)}
   lFieldValue: string;
@@ -1139,16 +1159,24 @@ begin
       end;
     ftInteger, ftSmallint, ftShortint, ftByte:
       begin
-        // sqlite doesn't support boolean, so are identified as integers
-        // so we need to do some more checks...
+        // recognize "smallintegers" mapped to boolean attribute
         if (aRTTIField.FieldType.TypeKind = tkEnumeration) and (aRTTIField.FieldType.Handle = TypeInfo(Boolean)) then
         begin
           aRTTIField.SetValue(AObject, AField.AsInteger = 1);
         end
-		else if (aRTTIField.FieldType.TypeKind = tkEnumeration) then
+        // general enumerations
+    		else if (aRTTIField.FieldType.TypeKind = tkEnumeration) then
         begin
-          TValue(AField.AsInteger).ExtractRawData(PByte(Pointer(AObject)) + aRTTIField.Offset);
+          case aRTTIField.FieldType.TypeSize of
+            SizeOf(Byte): lTmpValue := TValue.From<Byte>(AField.AsInteger);
+            SizeOf(Word): lTmpValue := TValue.From<Word>(AField.AsInteger);
+            SizeOf(Integer): lTmpValue := TValue.From<Integer>(AField.AsInteger);
+            else
+              raise EMVCException.CreateFmt('Unsupported enumeration type for field %s', [AField.FieldName]);
+          end;
+          lTmpValue.ExtractRawData(PByte(Pointer(AObject)) + aRTTIField.Offset);
         end
+        // plain integers
         else
         begin
           aRTTIField.SetValue(AObject, AField.AsInteger);
@@ -1178,8 +1206,9 @@ begin
       begin
         aRTTIField.SetValue(AObject, Frac(AField.AsDateTime));
       end;
-    ftTimeStamp:
+    ftTimeStamp, ftTimeStampOffset:
       begin
+        // Conversion between timestampoffset and TDateTime is automatically done by "AsDateTime"
         aRTTIField.SetValue(AObject, AField.AsDateTime);
       end;
     ftBoolean:
