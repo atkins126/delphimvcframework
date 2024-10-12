@@ -392,6 +392,7 @@ type
     function ClientIp: string;
     function ClientPrefer(const AMediaType: string): Boolean;
     function ClientPreferHTML: Boolean;
+    function ClientPreferredLanguage(): String;
     function GetOverwrittenHTTPMethod: TMVCHTTPMethodType;
 
     function SegmentParam(const AParamName: string; out AValue: string): Boolean;
@@ -770,6 +771,10 @@ type
     function BadRequestResponse: IMVCResponse; overload;
     function BadRequestResponse(const Message: String): IMVCResponse; overload;
 
+    function UnprocessableContentResponse(const Error: TObject): IMVCResponse; overload;
+    function UnprocessableContentResponse: IMVCResponse; overload;
+    function UnprocessableContentResponse(const Message: String): IMVCResponse; overload;
+
     function CreatedResponse(const Location: string = ''; const Body: TObject = nil): IMVCResponse; overload;
     function CreatedResponse(const Location: string; const Message: String): IMVCResponse; overload;
 
@@ -918,6 +923,7 @@ type
     ///   PageFragment ignore header and footer views
     /// </summary>
     function Page(const AViewNames: TArray<string>; const UseCommonHeadersAndFooters: Boolean = True): string; overload; inline;
+    function Page(const AViewName: string; const UseCommonHeadersAndFooters: Boolean = True): string; overload; inline;
 
     /// <summary>
     ///   Page calls GetRenderedView with sensible defaults.
@@ -1073,6 +1079,7 @@ type
     fConfigCache_DefaultContentType: String;
     fConfigCache_DefaultContentCharset: String;
     fConfigCache_PathPrefix: String;
+    fConfigCache_UseViewCache: Boolean;
     fSerializers: TDictionary<string, IMVCSerializer>;
     fMiddlewares: TList<IMVCMiddleware>;
     fControllers: TObjectList<TMVCControllerDelegate>;
@@ -1271,6 +1278,7 @@ type
     FContentType: string;
     FOutput: string;
   protected
+    FUseViewCache: Boolean;
     FJSONModel: TJSONObject;
     function GetRealFileName(const AViewName: string): string; virtual;
     function IsCompiledVersionUpToDate(const AFileName, ACompiledFileName: string): Boolean; virtual; abstract;
@@ -1661,12 +1669,21 @@ end;
 
 function TMVCWebRequest.ClientPrefer(const AMediaType: string): Boolean;
 begin
-  Result := AnsiPos(AMediaType, LowerCase(RawWebRequest.Accept)) = 1;
+  Result := (RawWebRequest.Accept = '*/*') or (AnsiPos(AMediaType, LowerCase(RawWebRequest.Accept)) = 1);
 end;
 
 function TMVCWebRequest.ClientPreferHTML: Boolean;
 begin
   Result := ClientPrefer(TMVCMediaType.TEXT_HTML);
+end;
+
+function TMVCWebRequest.ClientPreferredLanguage: String;
+begin
+  Result := FWebRequest.GetFieldByName('Accept-Language');
+  if Result.Contains(',') then
+  begin
+    Result := Result.Split([','])[0];
+  end;
 end;
 
 function TMVCWebRequest.ContentParam(const AName: string): string;
@@ -2772,7 +2789,7 @@ begin
                 except
                   on Ex: Exception do
                   begin
-                    Log.ErrorFmt('[%s] %s [PathInfo "%s"] (Custom message: "%s")',
+                    Log.Error('[%s] %s [PathInfo "%s"] (Custom message: "%s")',
                       [Ex.Classname, Ex.Message, GetRequestShortDescription(ARequest), 'Cannot create controller'], LOGGERPRO_TAG);
                     raise EMVCException.Create(http_status.InternalServerError,
                       'Cannot create controller (see log for more info)');
@@ -2843,30 +2860,37 @@ begin
                             begin
                               lResponseObject := lInvokeResult.AsObject;
                               try
-                                // https://learn.microsoft.com/en-us/aspnet/core/web-api/action-return-types?view=aspnetcore-7.0
-                                if lResponseObject is TDataSet then
+                                if lResponseObject <> nil then
                                 begin
-                                  lSelectedController.Render(TDataSet(lResponseObject), False);
-                                end
-                                else if lResponseObject is TStream then
-                                begin
-                                  lContext.Response.RawWebResponse.Content := EmptyStr;
-                                  lContext.Response.RawWebResponse.ContentType := lContext.Response.ContentType;
-                                  lContext.Response.RawWebResponse.ContentStream := TStream(lResponseObject);
-                                  lContext.Response.RawWebResponse.FreeContentStream := True;
-                                  lResponseObject := nil; //do not free it!!
-                                end
-                                else if lResponseObject is TMVCResponse then
-                                begin
-                                  TMVCRenderer.InternalRenderMVCResponse(lSelectedController, TMVCResponse(lResponseObject));
-                                end
-                                else if (not lResponseObject.InheritsFrom(TJsonBaseObject)) and TDuckTypedList.CanBeWrappedAsList(lResponseObject, lObjList) then
-                                begin
-                                  lSelectedController.Render(lObjList);
+                                  // https://learn.microsoft.com/en-us/aspnet/core/web-api/action-return-types?view=aspnetcore-7.0
+                                  if lResponseObject is TDataSet then
+                                  begin
+                                    lSelectedController.Render(TDataSet(lResponseObject), False);
+                                  end
+                                  else if lResponseObject is TStream then
+                                  begin
+                                    lContext.Response.RawWebResponse.Content := EmptyStr;
+                                    lContext.Response.RawWebResponse.ContentType := lContext.Response.ContentType;
+                                    lContext.Response.RawWebResponse.ContentStream := TStream(lResponseObject);
+                                    lContext.Response.RawWebResponse.FreeContentStream := True;
+                                    lResponseObject := nil; //do not free it!!
+                                  end
+                                  else if lResponseObject is TMVCResponse then
+                                  begin
+                                    TMVCRenderer.InternalRenderMVCResponse(lSelectedController, TMVCResponse(lResponseObject));
+                                  end
+                                  else if (not lResponseObject.InheritsFrom(TJsonBaseObject)) and TDuckTypedList.CanBeWrappedAsList(lResponseObject, lObjList) then
+                                  begin
+                                    lSelectedController.Render(lObjList);
+                                  end
+                                  else
+                                  begin
+                                    lSelectedController.Render(lResponseObject, False);
+                                  end;
                                 end
                                 else
                                 begin
-                                  lSelectedController.Render(lResponseObject, False);
+                                  lSelectedController.Render(TObject(nil));
                                 end;
                               finally
                                 lResponseObject.Free;
@@ -2958,7 +2982,7 @@ begin
             begin
               if not CustomExceptionHandling(ESess, lSelectedController, lContext) then
               begin
-                Log.ErrorFmt('[%s] %s [PathInfo "%s"] - %d %s (Custom message: "%s")',
+                Log.Error('[%s] %s [PathInfo "%s"] - %d %s (Custom message: "%s")',
                   [
                     ESess.Classname,
                     ESess.Message,
@@ -2976,7 +3000,7 @@ begin
             begin
               if not CustomExceptionHandling(E, lSelectedController, lContext) then
               begin
-                Log.ErrorFmt('[%s] %s [PathInfo "%s"] - %d %s (Custom message: "%s")',
+                Log.Error('[%s] %s [PathInfo "%s"] - %d %s (Custom message: "%s")',
                   [
                     E.Classname,
                     E.Message,
@@ -3000,7 +3024,7 @@ begin
             begin
               if not CustomExceptionHandling(EIO, lSelectedController, lContext) then
               begin
-                Log.ErrorFmt('[%s] %s [PathInfo "%s"] - %d %s (Custom message: "%s")',
+                Log.Error('[%s] %s [PathInfo "%s"] - %d %s (Custom message: "%s")',
                   [
                     EIO.Classname,
                     EIO.Message,
@@ -3033,7 +3057,7 @@ begin
 
               if not CustomExceptionHandling(Ex, lSelectedController, lContext) then
               begin
-                Log.ErrorFmt('[%s] %s [PathInfo "%s"] - %d %s (Custom message: "%s")',
+                Log.Error('[%s] %s [PathInfo "%s"] - %d %s (Custom message: "%s")',
                   [
                     Ex.Classname,
                     Ex.Message,
@@ -3062,7 +3086,7 @@ begin
             begin
               if not CustomExceptionHandling(Ex, lSelectedController, lContext) then
               begin
-                Log.ErrorFmt('[%s] %s [PathInfo "%s"] - %d %s (Custom message: "%s")',
+                Log.Error('[%s] %s [PathInfo "%s"] - %d %s (Custom message: "%s")',
                   [
                     Ex.Classname,
                     Ex.Message,
@@ -3652,7 +3676,7 @@ begin
     except
       on E: Exception do
       begin
-        Log.ErrorFmt('[%s] %s', [E.Classname, E.Message], LOGGERPRO_TAG);
+        Log.Error('[%s] %s', [E.Classname, E.Message], LOGGERPRO_TAG);
 
         AResponse.StatusCode := http_status.InternalServerError; // default is Internal Server Error
         if E is EMVCException then
@@ -3759,6 +3783,7 @@ begin
   FConfigCache_DefaultContentType := Config[TMVCConfigKey.DefaultContentType];
   FConfigCache_DefaultContentCharset := Config[TMVCConfigKey.DefaultContentCharset];
   FConfigCache_PathPrefix := Config[TMVCConfigKey.PathPrefix];
+  FConfigCache_UseViewCache := Config[TMVCConfigKey.ViewCache] = 'true';
 end;
 
 class function TMVCEngine.SendSessionCookie(const AContext: TWebContext;
@@ -4010,11 +4035,6 @@ begin
       'Hint: Messaging extensions require a valid clientid. Did you call /messages/clients/YOUR_CLIENT_ID ?');
 end;
 
-function TMVCRenderer.BadRequestResponse: IMVCResponse;
-begin
-  Result := StatusCodeResponse(HTTP_STATUS.BadRequest, nil);
-end;
-
 function TMVCRenderer.AcceptedResponse(const Location: string;
   const Body: TObject): IMVCResponse;
 var
@@ -4032,6 +4052,11 @@ begin
   Result := lRespBuilder.StatusCode(HTTP_STATUS.Accepted).Build;
 end;
 
+function TMVCRenderer.BadRequestResponse: IMVCResponse;
+begin
+  Result := StatusCodeResponse(HTTP_STATUS.BadRequest, nil);
+end;
+
 function TMVCRenderer.BadRequestResponse(const Error: TObject): IMVCResponse;
 begin
   Result := StatusCodeResponse(HTTP_STATUS.BadRequest, Error);
@@ -4041,6 +4066,22 @@ function TMVCRenderer.BadRequestResponse(const Message: String): IMVCResponse;
 begin
   Result := StatusCodeResponse(HTTP_STATUS.BadRequest, nil, Message);
 end;
+
+function TMVCRenderer.UnprocessableContentResponse: IMVCResponse;
+begin
+  Result := StatusCodeResponse(HTTP_STATUS.UnprocessableEntity, nil);
+end;
+
+function TMVCRenderer.UnprocessableContentResponse(const Error: TObject): IMVCResponse;
+begin
+  Result := StatusCodeResponse(HTTP_STATUS.UnprocessableEntity, Error);
+end;
+
+function TMVCRenderer.UnprocessableContentResponse(const Message: String): IMVCResponse;
+begin
+  Result := StatusCodeResponse(HTTP_STATUS.UnprocessableEntity, nil, Message);
+end;
+
 
 function TMVCRenderer.ConflictResponse: IMVCResponse;
 begin
@@ -4313,7 +4354,7 @@ begin
   except
     on E: Exception do
     begin
-      Log.ErrorFmt('[%s] %s', [E.Classname, E.Message], LOGGERPRO_TAG);
+      Log.Error('[%s] %s', [E.Classname, E.Message], LOGGERPRO_TAG);
       raise;
     end;
   end;
@@ -4350,6 +4391,11 @@ begin
     Result := GetRenderedView(fPageHeaders + AViewNames + fPageFooters, JSONModel)
   else
     Result := GetRenderedView(AViewNames, JSONModel)
+end;
+
+function TMVCController.Page(const AViewName: string; const UseCommonHeadersAndFooters: Boolean): string;
+begin
+  Result := Page([AViewName], UseCommonHeadersAndFooters);
 end;
 
 function TMVCController.PageFragment(const AViewNames: TArray<string>;
@@ -4791,7 +4837,9 @@ end;
 
 function TMVCController.GetRenderedView(const AViewNames: TArray<string>): string;
 var
-  lView: TMVCBaseViewEngine; lViewName: string; lStrStream: TStringBuilder;
+  lView: TMVCBaseViewEngine;
+  lViewName: string;
+  lStrStream: TStringBuilder;
 begin
   lStrStream := TStringBuilder.Create;
   try
@@ -5185,6 +5233,7 @@ begin
   FViewModel := AViewModel;
   FContentType := AContentType;
   FOutput := EmptyStr;
+  FUseViewCache := Engine.fConfigCache_UseViewCache;
 end;
 
 constructor TMVCBaseViewEngine.Create(

@@ -25,7 +25,7 @@ package dmvcframeworkRT;
 {$IMAGEBASE $400000}
 {$DEFINE DEBUG}
 {$ENDIF IMPLICITBUILDING}
-{$DESCRIPTION 'DMVCFramework - CopyRight (2010-2023) Daniele Teti and the DMVCFramework Team'}
+{$DESCRIPTION 'DMVCFramework - CopyRight (2010-2024) Daniele Teti and the DMVCFramework Team'}
 {$LIBSUFFIX '120'}
 {$RUNONLY}
 {$IMPLICITBUILD ON}
@@ -120,7 +120,8 @@ contains
   MVCFramework.Container in '..\..\sources\MVCFramework.Container.pas',
   sqids in '..\..\sources\sqids.pas',
   MVCFramework.View.Renderers.TemplatePro in '..\..\sources\MVCFramework.View.Renderers.TemplatePro.pas',
-  TemplatePro in '..\..\sources\TemplatePro.pas';
+  TemplatePro in '..\..\sources\TemplatePro.pas',
+  MVCFramework.HTMX in '..\..\sources\MVCFramework.HTMX.pas';
 
 end.
 

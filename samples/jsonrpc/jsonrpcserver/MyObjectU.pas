@@ -33,7 +33,8 @@ uses
   BusinessObjectsU,
   FireDAC.Comp.Client,
   MVCFramework.Serializer.Commons,
-  MVCFramework.Commons, MVCFramework, MVCFramework.JSONRPC, CommonTypesU;
+  MVCFramework.Commons, MVCFramework,
+  MVCFramework.JSONRPC, CommonTypesU;
 
 type
 
@@ -44,11 +45,12 @@ type
     // function GetPeopleDataset: TFDMemTable;
     procedure FillPeopleDataset(const DataSet: TDataSet);
   public
-    procedure OnBeforeCallHook(const Context: TWebContext; const JSONRequest: TJDOJsonObject);
     procedure OnBeforeRoutingHook(const Context: TWebContext; const JSON: TJDOJsonObject);
+    procedure OnBeforeCallHook(const Context: TWebContext; const JSONRequest: TJDOJsonObject);
     procedure OnAfterCallHook(const Context: TWebContext; const JSONResponse: TJDOJsonObject);
   public
     [MVCDoc('You know, returns aValue1 - aValue2')]
+    [MVCJSONRPCAllowGET]
     function Subtract(Value1, Value2: Integer): Integer;
     [MVCDoc('Returns the revers of the string passed as input')]
     function ReverseString(const aString: string; const aUpperCase: Boolean): string;
@@ -63,12 +65,13 @@ type
     [MVCJSONRPCAllowGET]
     function GetStringDictionary: TMVCStringDictionary;
     function GetUser(aUserName: string): TPerson;
-    function SavePerson(const Person: TJsonObject): Integer;
+    function SavePerson(const Person: TPerson): Integer;
     function FloatsTest(const aDouble: Double; const aExtended: Extended): Extended;
     procedure DoSomething;
     procedure RaiseCustomException;
     function RaiseGenericException(const ExceptionType: Integer): Integer;
     function SaveObjectWithJSON(const WithJSON: TJsonObject): TJsonObject;
+
     //enums and sets support
     function PassingEnums(Value1: TEnumTest; Value2: TEnumTest): TEnumTest;
     function GetSetBySet(Value: TSetTest): TSetTest;
@@ -381,7 +384,7 @@ begin
   end;
 end;
 
-function TMyObject.SavePerson(const Person: TJsonObject): Integer;
+function TMyObject.SavePerson(const Person: TPerson): Integer;
 // var
 // lPerson: TPerson;
 begin
@@ -393,6 +396,7 @@ begin
   // end;
 
   // this maybe the id of the newly created person
+  LogI(Person);
   Result := Random(1000);
 end;
 
@@ -425,7 +429,10 @@ end;
 procedure TMyObject.OnAfterCallHook(const Context: TWebContext; const JSONResponse: TJDOJsonObject);
 begin
   Log.Info('TMyObjectWithHooks.OnAfterCallHook >> ', 'jsonrpc');
-  Log.Info(sLineBreak + JSONResponse.ToJSON(False), 'jsonrpc');
+  if Assigned(JSONResponse) then
+  begin
+    Log.Info(sLineBreak + JSONResponse.ToJSON(False), 'jsonrpc');
+  end;
   Log.Info('TMyObjectWithHooks.OnAfterCallHook << ', 'jsonrpc');
 end;
 

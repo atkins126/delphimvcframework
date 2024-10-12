@@ -300,7 +300,6 @@ procedure TMainForm.btnGetUserClick(Sender: TObject);
 var
   lReq: IJSONRPCRequest;
   lResp: IJSONRPCResponse;
-  lJSON: TJsonObject;
 begin
   lbPerson.Clear;
   lReq := TJSONRPCRequest.Create;
@@ -312,12 +311,23 @@ begin
     raise Exception.Create(lResp.Error.ErrMessage);
 
   // Remember that TObject descendants (but TDataset, TJDOJSONObject and TJDOJSONArray)
-  // are serialized as JSON objects
-  lJSON := lResp.Result.AsObject as TJsonObject;
-  lbPerson.Items.Add('First Name:'.PadRight(15) + lJSON.S['firstname']);
-  lbPerson.Items.Add('Last Name:'.PadRight(15) + lJSON.S['lastname']);
-  lbPerson.Items.Add('Married:'.PadRight(15) + lJSON.B['married'].ToString(TUseBoolStrs.True));
-  lbPerson.Items.Add('DOB:'.PadRight(15) + DateToStr(lJSON.D['dob']));
+  // are serialized as JSON objects, so you can always read the JSON object
+//  var lJSON := lResp.Result.AsObject as TJsonObject;
+//  lbPerson.Items.Add('First Name:'.PadRight(15) + lJSON.S['firstname']);
+//  lbPerson.Items.Add('Last Name:'.PadRight(15) + lJSON.S['lastname']);
+//  lbPerson.Items.Add('Married:'.PadRight(15) + lJSON.B['married'].ToString(TUseBoolStrs.True));
+//  lbPerson.Items.Add('DOB:'.PadRight(15) + DateToStr(lJSON.D['dob']));
+
+  var lPerson := TPerson.Create;
+  try
+    lResp.ResultAs(lPerson);
+    lbPerson.Items.Add('First Name:'.PadRight(15) + lPerson.FirstName);
+    lbPerson.Items.Add('Last Name:'.PadRight(15) + lPerson.LastName);
+    lbPerson.Items.Add('Married:'.PadRight(15) + lPerson.Married.ToString(TUseBoolStrs.True));
+    lbPerson.Items.Add('DOB:'.PadRight(15) + DateToStr(lPerson.DOB));
+  finally
+    lPerson.Free;
+  end;
 end;
 
 procedure TMainForm.btnInvalid1Click(Sender: TObject);
@@ -510,15 +520,17 @@ procedure TMainForm.btnSubtractWithNamedParamsClick(Sender: TObject);
 var
   lReq: IJSONRPCRequest;
   lResp: IJSONRPCResponse;
+  lExecutor: IMVCJSONRPCExecutor;
 begin
-  lReq := TJSONRPCRequest.Create;
-  lReq.Method := 'subtract';
-  lReq.RequestID := Random(1000);
+  lExecutor := TMVCJSONRPCExecutor.Create('http://localhost:8080');
+  lReq := lExecutor.CreateRequest('subtract', Random(1000));
   lReq.Params.AddByName('Value1', StrToInt(Edit1.Text));
   lReq.Params.AddByName('Value2', StrToInt(Edit2.Text));
-  lResp := FExecutor.ExecuteRequest('/jsonrpc', lReq);
+  lResp := lExecutor.ExecuteRequest('/jsonrpc', lReq, jrpcGET);
   Edit3.Text := lResp.Result.AsInteger.ToString;
 end;
+
+
 
 procedure TMainForm.btnWithJSONClick(Sender: TObject);
 var
@@ -736,9 +748,9 @@ begin
   FDMemTable1.Active := False;
   lReq := TJSONRPCRequest.Create(Random(1000), 'getcustomers');
   lReq.Params.AddByName('FilterString', edtFilter.Text);
-  lResp := FExecutor.ExecuteRequest('/jsonrpc', lReq, jrpcPOST);
+  lResp := FExecutor.ExecuteRequest('/jsonrpc', lReq);
   FDMemTable1.Active := True;
-  FDMemTable1.LoadFromTValue(lResp.Result);
+  FDMemTable1.LoadFromJSONRPCResponse(lResp);
   FDMemTable1.First;
 end;
 
