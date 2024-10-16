@@ -46,7 +46,9 @@ uses
   MVCFramework.RQL.Parser,
   MVCFramework.Cache,
   MVCFramework.Serializer.Intf,
-  MVCFramework.Serializer.Commons, System.SyncObjs, System.TypInfo;
+  MVCFramework.Serializer.Commons,
+  System.SyncObjs,
+  System.TypInfo;
 
 type
   EMVCActiveRecord = class(EMVCException)
@@ -879,15 +881,15 @@ type
     class var cInstance: TMVCSQLGeneratorRegistry;
 
   class var
-    cLock: TObject;
     fSQLGenerators: TDictionary<string, TMVCSQLGeneratorClass>;
+    cConnectionsLock: TObject;
   protected
     constructor Create;
   public
     destructor Destroy; override;
     class function Instance: TMVCSQLGeneratorRegistry;
-    class destructor Destroy;
     class constructor Create;
+    class destructor Destroy;
     procedure RegisterSQLGenerator(const aBackend: string; const aRQLBackendClass: TMVCSQLGeneratorClass);
     procedure UnRegisterSQLGenerator(const aBackend: string);
     function GetSQLGenerator(const aBackend: string): TMVCSQLGeneratorClass;
@@ -964,13 +966,14 @@ uses
   MVCFramework.Nullables,
   MVCFramework.RTTI.Utils,
   FireDAC.Stan.Option,
-  Data.FmtBcd, System.Variants, System.Math;
+  Data.FmtBcd,
+  System.Variants,
+  System.Math;
 
 var
   gCtx: TRttiContext;
   gEntitiesRegistry: IMVCEntitiesRegistry;
   gConnections: IMVCActiveRecordConnections;
-  gConnectionsLock: TObject;
   gTableMap: IMVCActiveRecordTableMap;
   gTableMapLock: TObject;
 
@@ -3835,13 +3838,13 @@ end;
 
 class constructor TMVCSQLGeneratorRegistry.Create;
 begin
-  cLock := TObject.Create;
+  cConnectionsLock := TObject.Create;
 end;
 
 class destructor TMVCSQLGeneratorRegistry.Destroy;
 begin
-  cLock.Free;
   cInstance.Free;
+  cConnectionsLock.Free;
 end;
 
 destructor TMVCSQLGeneratorRegistry.Destroy;
@@ -3862,14 +3865,14 @@ class function TMVCSQLGeneratorRegistry.Instance: TMVCSQLGeneratorRegistry;
 begin
   if not Assigned(cInstance) then
   begin
-    TMonitor.Enter(cLock);
+    TMonitor.Enter(cConnectionsLock);
     try
       if not Assigned(cInstance) then
       begin
         cInstance := TMVCSQLGeneratorRegistry.Create;
       end;
     finally
-      TMonitor.Exit(cLock);
+      TMonitor.Exit(cConnectionsLock);
     end;
   end;
   Result := cInstance;
@@ -4829,7 +4832,6 @@ end;
 
 initialization
 
-gConnectionsLock := TObject.Create;
 gTableMapLock := TObject.Create;
 gCtx := TRttiContext.Create;
 gCtx.FindType('');
@@ -4837,7 +4839,6 @@ gCtx.FindType('');
 finalization
 
 gCtx.Free;
-gConnectionsLock.Free;
 gTableMapLock.Free;
 
 end.
