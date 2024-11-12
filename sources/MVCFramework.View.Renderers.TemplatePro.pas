@@ -43,8 +43,8 @@ uses
   MVCFramework.Serializer.Defaults,
   MVCFramework.Serializer.Intf,
   MVCFramework.DuckTyping,
-  TemplatePro,
   MVCFramework.Cache,
+  TemplatePro,
   Data.DB,
   System.Rtti,
   JsonDataObjects;
@@ -57,12 +57,12 @@ var
 begin
   if not aValue.IsObject then
   begin
-    Result := False;
+    Exit(False);
   end;
 
   if Length(aParameters) <> 0 then
   begin
-    Result := '(Error: Expected 0 params, got ' + Length(aParameters).ToString + ')';
+    raise EMVCSSVException.Create('Expected 0 params, got ' + Length(aParameters).ToString);
   end;
 
   if aValue.AsObject is TDataSet then
@@ -96,7 +96,11 @@ var
 begin
   if not aValue.IsObject then
   begin
-    Result := '(Error: Cannot serialize non-object as JSON)';
+    if aValue.IsType<Int64> then
+    begin
+      Exit(aValue.AsInt64);
+    end;
+    Exit('(Error: Cannot serialize non-object as JSON)');
   end;
 
   if TDuckTypedList.CanBeWrappedAsList(aValue.AsObject, lWrappedList) then
@@ -132,7 +136,10 @@ begin
   if FUseViewCache then
   begin
     lCacheDir := TPath.Combine(TPath.GetDirectoryName(lViewFileName), '__cache__');
-    TDirectory.CreateDirectory(lCacheDir);
+    if not TDirectory.Exists(lCacheDir) then
+    begin
+      TDirectory.CreateDirectory(lCacheDir);
+    end;
     lCompiledViewFileName := TPath.Combine(lCacheDir, TPath.ChangeExtension(TPath.GetFileName(lViewFileName), '.' + TEMPLATEPRO_VERSION + '.tpcu'));
 
     if not FileAge(lViewFileName, lActualFileTimeStamp) then
@@ -173,19 +180,24 @@ begin
       begin
         lCompiledTemplate.SetData(lPair.Key, ViewModel[lPair.Key]);
       end;
+      lCompiledTemplate.SetData('LoggedUserName', WebContext.LoggedUser.UserName);
     end;
     lCompiledTemplate.AddFilter('json', DumpAsJSONString);
     lCompiledTemplate.AddFilter('count', GetDataSetOrObjectListCount);
     lCompiledTemplate.AddFilter('fromquery',
       function (const aValue: TValue; const aParameters: TArray<string>): TValue
       begin
+        if not aValue.IsEmpty then
+        begin
+          raise ETProRenderException.Create('Filter "fromquery" cannot be applied to a value [HINT] Use {{:|fromquery,"parname"}}');
+        end;
         if Length(aParameters) = 1 then
         begin
           Result := Self.WebContext.Request.QueryStringParam(aParameters[0]);
         end
         else
         begin
-          Result := '(Error: Expected 1 param, got ' + Length(aParameters).ToString + ')';
+          raise ETProRenderException.Create('Expected 1 param for filter "fromquery", got ' + Length(aParameters).ToString);
         end;
       end);
     if Assigned(FBeforeRenderCallback) then

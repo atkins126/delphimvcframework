@@ -513,11 +513,11 @@ type
     FCustomData: TMVCCustomData;
     procedure SetLoggedSince(const AValue: TDateTime);
     procedure SetCustomData(const Value: TMVCCustomData);
+    function GetIsValid: Boolean;
   public
     constructor Create;
     destructor Destroy; override;
 
-    function IsValid: Boolean;
     procedure Clear;
 
     procedure SaveToSession(const AWebSession: TMVCWebSession);
@@ -528,6 +528,7 @@ type
     property LoggedSince: TDateTime read FLoggedSince write SetLoggedSince;
     property Realm: string read FRealm write FRealm;
     property CustomData: TMVCCustomData read FCustomData write SetCustomData;
+    property IsValid: Boolean read GetIsValid;
   end;
 
   TWebContext = class
@@ -893,17 +894,25 @@ type
 
   TMVCController = class(TMVCRenderer)
   private
-    FViewModel: TMVCViewDataObject;
+    fViewModel: TMVCViewDataObject;
     fPageHeaders: TArray<String>;
     fPageFooters: TArray<String>;
+    fFreeList: TObjectList<TObject>;
     function GetSession: TMVCWebSession;
     function GetViewData(const aModelName: string): TValue;
     procedure SetViewData(const aModelName: string; const Value: TValue);
+    procedure InternalToFree(aObject: TObject);
   protected const
     CLIENTID_KEY = '__clientid';
   protected
     procedure MVCControllerAfterCreate; virtual;
     procedure MVCControllerBeforeDestroy; virtual;
+
+    /// <summary>
+    ///   After action execution frees all the objects added. Works only with functional actions.
+    /// </summary>
+    function ToFree<T: class>(aObject: T): T; overload;
+    procedure ToFree(aObject: TObject); overload;
 
     procedure OnBeforeAction(AContext: TWebContext; const AActionName: string;
       var AHandled: Boolean); virtual;
@@ -2123,7 +2132,7 @@ begin
   inherited Destroy;
 end;
 
-function TUser.IsValid: Boolean;
+function TUser.GetIsValid: Boolean;
 begin
   Result := (not UserName.IsEmpty) and (LoggedSince > 0);
 end;
@@ -2567,20 +2576,27 @@ begin
         const Sender: TMVCCustomRouter;
         const RouterLogState: TMVCRouterLogState;
         const Context: TWebContext)
+    var
+      lStatusCode: Word;
     begin
+      lStatusCode := Context.Response.StatusCode;
       case RouterLogState of
         rlsRouteFound:
           begin
-            LogI(Context.Request.HTTPMethodAsString + ':' +
-              Context.Request.PathInfo + ' [' + Context.Request.ClientIp + '] -> ' +
-              Sender.GetQualifiedActionName + ' - ' + IntToStr(Context.Response.StatusCode) + ' ' +
-              Context.Response.ReasonString);
+            if lStatusCode < HTTP_STATUS.InternalServerError then
+              LogI(Context.Request.HTTPMethodAsString + ':' +
+                Context.Request.PathInfo + ' [' + Context.Request.ClientIp + '] -> ' +
+                Sender.GetQualifiedActionName + ' - ' + IntToStr(lStatusCode))
+            else
+              LogE(Context.Request.HTTPMethodAsString + ':' +
+                Context.Request.PathInfo + ' [' + Context.Request.ClientIp + '] -> ' +
+                Sender.GetQualifiedActionName + ' - ' + IntToStr(lStatusCode))
           end;
         rlsRouteNotFound:
           begin
             LogW(Context.Request.HTTPMethodAsString + ':' +
               Context.Request.PathInfo + ' [' + Context.Request.ClientIp + '] -> {ROUTE NOT FOUND} - ' +
-              IntToStr(Context.Response.StatusCode) + ' ' + Context.Response.ReasonString);
+              IntToStr(Context.Response.StatusCode));
           end;
       else
         raise EMVCException.Create('Invalid RouterLogState');
@@ -2953,6 +2969,7 @@ begin
                           end;
                         end;
                       finally
+                        lSelectedController.fFreeList.Free;
                         lSelectedController.OnAfterAction(lContext, lRouterMethodToCallName);
                       end;
                     end;
@@ -4193,6 +4210,26 @@ begin
   Result := GetSHA1HashFromString(Data);
 end;
 
+procedure TMVCController.InternalToFree(aObject: TObject);
+begin
+  if not Assigned(fFreeList) then
+  begin
+    fFreeList := TObjectList<TObject>.Create(True);
+  end;
+  fFreeList.Add(aObject);
+end;
+
+procedure TMVCController.ToFree(aObject: TObject);
+begin
+  InternalToFree(aObject);
+end;
+
+function TMVCController.ToFree<T>(aObject: T): T;
+begin
+  InternalToFree(aObject);
+  Result := aObject;
+end;
+
 function TMVCController.GetIfMatch: String;
 begin
   Result := Context.Request.GetHeader('If-Match');
@@ -4875,32 +4912,8 @@ begin
 end;
 
 function TMVCController.GetRenderedView(const AViewNames: TArray<string>; const OnBeforeRenderCallback: TMVCSSVBeforeRenderCallback): string;
-var
-  lView: TMVCBaseViewEngine;
-  lViewName: string;
-  lStrStream: TStringBuilder;
 begin
-  lStrStream := TStringBuilder.Create;
-  try
-    lView := FEngine.ViewEngineClass.Create(
-      Engine,
-      Context,
-      Self,
-      FViewModel,
-      ContentType);
-    try
-      lView.FBeforeRenderCallback := OnBeforeRenderCallback;
-      for lViewName in AViewNames do
-      begin
-        lView.Execute(lViewName, lStrStream);
-      end;
-    finally
-      lView.Free;
-    end;
-    Result := lStrStream.ToString;
-  finally
-    lStrStream.Free;
-  end;
+  Result := GetRenderedView(AViewNames, nil, OnBeforeRenderCallback);
 end;
 
 procedure TMVCRenderer.Render<T>(const ACollection: TObjectList<T>;
@@ -5301,28 +5314,29 @@ function TMVCBaseViewEngine.GetRealFileName(const AViewName: string): string;
 var
   lFileName: string;
   lDefaultViewFileExtension: string;
+  lTemplateFolder: string;
 begin
   lDefaultViewFileExtension := Config[TMVCConfigKey.DefaultViewFileExtension];
-  lFileName := StringReplace(AViewName, '/', '\', [rfReplaceAll]);
+  lFileName := StringReplace(AViewName, '/', PathDelim, [rfReplaceAll]);
 
-  if (lFileName = '\') then
+  if (lFileName = PathDelim) then
   begin
-    lFileName := '\index.' + lDefaultViewFileExtension
+    lFileName := PathDelim + 'index.' + lDefaultViewFileExtension
   end
   else
   begin
     lFileName := lFileName + '.' + lDefaultViewFileExtension;
   end;
 
-  if DirectoryExists(Config[TMVCConfigKey.ViewPath]) then
+  lTemplateFolder := Config[TMVCConfigKey.ViewPath];
+  if DirectoryExists(lTemplateFolder) then
   begin
-    lFileName := ExpandFileName(IncludeTrailingPathDelimiter(Config.Value[TMVCConfigKey.ViewPath]) +
-      lFileName)
+    lFileName := ExpandFileName(IncludeTrailingPathDelimiter(lTemplateFolder) + lFileName)
   end
   else
   begin
-    lFileName := ExpandFileName(IncludeTrailingPathDelimiter(GetApplicationFileNamePath +
-      Config.Value[TMVCConfigKey.ViewPath]) + lFileName);
+    lFileName := ExpandFileName(IncludeTrailingPathDelimiter(
+      GetApplicationFileNamePath + lTemplateFolder) + lFileName);
   end;
 
   if FileExists(lFileName) then

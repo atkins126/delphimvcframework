@@ -35,7 +35,7 @@ uses
   System.RTTI;
 
 const
-  TEMPLATEPRO_VERSION = '0.7.0';
+  TEMPLATEPRO_VERSION = '0.7.1';
 
 type
   ETProException = class(Exception)
@@ -120,6 +120,8 @@ type
   TTProCompiledTemplateGetValueEvent = reference to procedure(const DataSource, Members: string; var Value: TValue;
     var Handled: Boolean);
 
+  PTProFormatSettings = ^TFormatSettings;
+
   ITProCompiledTemplate = interface
     ['{0BE04DE7-6930-456B-86EE-BFD407BA6C46}']
     function Render: String;
@@ -133,6 +135,9 @@ type
     function GetOnGetValue: TTProCompiledTemplateGetValueEvent;
     procedure SetOnGetValue(const Value: TTProCompiledTemplateGetValueEvent);
     property OnGetValue: TTProCompiledTemplateGetValueEvent read GetOnGetValue write SetOnGetValue;
+    function GetFormatSettings: PTProFormatSettings;
+    procedure SetFormatSettings(const Value: PTProFormatSettings);
+    property FormatSettings: PTProFormatSettings read GetFormatSettings write SetFormatSettings;
   end;
 
   TTProCompiledTemplateEvent = reference to procedure(const TemplateProCompiledTemplate: ITProCompiledTemplate);
@@ -179,7 +184,7 @@ type
     function EvaluateIfExpressionAt(var Idx: Int64): Boolean;
     function GetVariables: TTProVariables;
     procedure SplitVariableName(const VariableWithMember: String; out VarName, VarMembers: String);
-    function ExecuteFilter(aFunctionName: string; aParameters: TArray<string>; aValue: TValue): TValue;
+    function ExecuteFilter(aFunctionName: string; aParameters: TArray<string>; aValue: TValue; const aVarNameWhereShoudBeApplied: String): TValue;
     procedure CheckParNumber(const aHowManyPars: Integer; const aParameters: TArray<string>); overload;
     procedure CheckParNumber(const aMinParNumber, aMaxParNumber: Integer; const aParameters: TArray<string>); overload;
     function GetPseudoVariable(const VarIterator: Integer; const PseudoVarName: String): TValue; overload;
@@ -189,6 +194,8 @@ type
     function EvaluateValue(var Idx: Int64; out MustBeEncoded: Boolean): TValue;
     procedure SetOnGetValue(const Value: TTProCompiledTemplateGetValueEvent);
     procedure DoOnGetValue(const DataSource, Members: string; var Value: TValue; var Handled: Boolean);
+    function GetFormatSettings: PTProFormatSettings;
+    procedure SetFormatSettings(const Value: PTProFormatSettings);
     class procedure InternalDumpToFile(const FileName: String; const aTokens: TList<TToken>);
   public
     destructor Destroy; override;
@@ -201,6 +208,7 @@ type
     procedure AddFilter(const FunctionName: string; const FunctionImpl: TTProTemplateFunction); overload;
     procedure AddFilter(const FunctionName: string; const AnonFunctionImpl: TTProTemplateAnonFunction); overload;
     procedure DumpToFile(const FileName: String);
+    property FormatSettings: PTProFormatSettings read GetFormatSettings write SetFormatSettings;
     property OnGetValue: TTProCompiledTemplateGetValueEvent read GetOnGetValue write SetOnGetValue;
   end;
 
@@ -235,6 +243,7 @@ type
     procedure ProcessJumps(const aTokens: TList<TToken>);
     procedure Compile(const aTemplate: string; const aTokens: TList<TToken>; const aFileNameRefPath: String); overload;
     constructor Create(const aEncoding: TEncoding; const aOptions: TTProCompilerOptions = []); overload;
+    procedure MatchFilter(lVarName: string; var lFuncName: string; var lFuncParamsCount: Integer; var lFuncParams: TArray<String>);
   public
     function Compile(const aTemplate: string; const aFileNameRefPath: String = ''): ITProCompiledTemplate; overload;
     constructor Create(aEncoding: TEncoding = nil); overload;
@@ -327,7 +336,7 @@ end;
 
 procedure FunctionError(const aFunctionName, aErrMessage: string);
 begin
-  raise ETProRenderException.Create(Format('%s in function %s', [aErrMessage, aFunctionName])) at ReturnAddress;
+  raise ETProRenderException.Create(Format('[%1:s] %0:s (error in filter call for function [%1:s])', [aErrMessage, aFunctionName])) at ReturnAddress;
 end;
 
 function _Comparand(const aComparandType: TComparandType; const aValue: TValue; const aParameters: TArray<String>; const aLocaleFormatSettings: TFormatSettings): TValue;
@@ -446,7 +455,11 @@ function TTProCompiledTemplate.GetDataSetFieldAsTValue(const aDataSet: TDataSet;
 var
   lField: TField;
 begin
-  lField := aDataSet.FieldByName(FieldName);
+  lField := aDataSet.FindField(FieldName);
+  if not Assigned(lField) then
+  begin
+    Exit(TValue.Empty);
+  end;
   case lField.DataType of
     ftInteger, ftSmallInt, ftWord:
       Result := lField.AsInteger;
@@ -470,6 +483,11 @@ begin
     Error('Invalid data type for field "%s": %s',
       [FieldName, TRttiEnumerationType.GetName<TFieldType>(lField.DataType)]);
   end;
+end;
+
+function TTProCompiledTemplate.GetFormatSettings: PTProFormatSettings;
+begin
+  Result := @fLocaleFormatSettings;
 end;
 
 function TTProCompiledTemplate.GetOnGetValue: TTProCompiledTemplateGetValueEvent;
@@ -501,6 +519,17 @@ function TTProCompiledTemplate.GetTValueVarAsString(const Value: TValue; const V
 var
   lIsObject: Boolean;
   lAsObject: TObject;
+  lNullableInt32: NullableInt32;
+  lNullableUInt32: NullableUInt32;
+  lNullableInt16: NullableInt16;
+  lNullableUInt16: NullableUInt16;
+  lNullableInt64: NullableInt64;
+  lNullableUInt64: NullableUInt64;
+  lNullableCurrency: NullableCurrency;
+  lNullableBoolean: NullableBoolean;
+  lNullableTDate: NullableTDate;
+  lNullableTTime: NullableTTime;
+  lNullableTDateTime: NullableTDateTime;
 begin
   if Value.IsEmpty then
   begin
@@ -528,53 +557,76 @@ begin
   begin
     if Value.TypeInfo.Kind = tkRecord then
     begin
+      Result := '';
       if Value.TypeInfo = TypeInfo(NullableInt32) then
       begin
-        Result := Value.AsType<NullableInt32>.Value.ToString;
+        lNullableInt32 := Value.AsType<NullableInt32>;
+        if lNullableInt32.HasValue then
+          Result := lNullableInt32.Value.ToString
       end
       else if Value.TypeInfo = TypeInfo(NullableUInt32) then
       begin
-        Result := Value.AsType<NullableInt32>.Value.ToString;
+        lNullableUInt32 := Value.AsType<NullableUInt32>;
+        if lNullableUInt32.HasValue then
+          Result := lNullableUInt32.Value.ToString
       end
       else if Value.TypeInfo = TypeInfo(NullableInt16) then
       begin
-        Result := Value.AsType<NullableInt16>.Value.ToString;
+        lNullableInt16 := Value.AsType<NullableInt16>;
+        if lNullableInt16.HasValue then
+          Result := lNullableInt16.Value.ToString
       end
       else if Value.TypeInfo = TypeInfo(NullableUInt16) then
       begin
-        Result := Value.AsType<NullableUInt16>.Value.ToString;
+        lNullableUInt16 := Value.AsType<NullableUInt16>;
+        if lNullableUInt16.HasValue then
+          Result := lNullableUInt16.Value.ToString
       end
       else if Value.TypeInfo = TypeInfo(NullableInt64) then
       begin
-        Result := Value.AsType<NullableInt64>.Value.ToString;
+        lNullableInt64 := Value.AsType<NullableInt64>;
+        if lNullableInt64.HasValue then
+          Result := lNullableInt64.Value.ToString
       end
-      else if Value.TypeInfo = TypeInfo(NullableInt64) then
+      else if Value.TypeInfo = TypeInfo(NullableUInt64) then
       begin
-        Result := Value.AsType<NullableInt64>.Value.ToString;
+        lNullableUInt64 := Value.AsType<NullableUInt64>;
+        if lNullableUInt64.HasValue then
+          Result := lNullableUInt64.Value.ToString
       end
       else if Value.TypeInfo = TypeInfo(NullableString) then
       begin
-        Result := Value.AsType<NullableString>.Value;
+        Result := Value.AsType<NullableString>.ValueOrDefault;
       end
       else if Value.TypeInfo = TypeInfo(NullableCurrency) then
       begin
-        Result := Value.AsType<NullableCurrency>.Value.ToString;
+        lNullableCurrency := Value.AsType<NullableCurrency>;
+        if lNullableCurrency.HasValue then
+          Result := FloatToStr(lNullableCurrency.Value, fLocaleFormatSettings);
       end
       else if Value.TypeInfo = TypeInfo(NullableBoolean) then
       begin
-        Result := Value.AsType<NullableBoolean>.Value.ToString;
+        lNullableBoolean := Value.AsType<NullableBoolean>;
+        if lNullableBoolean.HasValue then
+          Result := BoolToStr(lNullableBoolean.Value, True);
       end
       else if Value.TypeInfo = TypeInfo(NullableTDate) then
       begin
-        Result := DateToISO8601(Value.AsType<NullableTDate>.Value);
+        lNullableTDate := Value.AsType<NullableTDate>;
+        if lNullableTDate.HasValue then
+          Result := DateToISO8601(lNullableTDate.Value);
       end
       else if Value.TypeInfo = TypeInfo(NullableTTime) then
       begin
-        Result := DateToISO8601(Value.AsType<NullableTTime>.Value);
+        lNullableTTime := Value.AsType<NullableTTime>;
+        if lNullableTTime.HasValue then
+          Result := DateToISO8601(lNullableTTime.Value);
       end
       else if Value.TypeInfo = TypeInfo(NullableTDateTime) then
       begin
-        Result := DateToISO8601(Value.AsType<NullableTDateTime>.Value);
+        lNullableTDateTime := Value.AsType<NullableTDateTime>;
+        if lNullableTDateTime.HasValue then
+          Result := DateToISO8601(lNullableTDateTime.Value);
       end
       else
       begin
@@ -583,7 +635,30 @@ begin
     end
     else
     begin
-      Result := Value.ToString;
+      case Value.Kind of
+        tkInteger: Result := Value.AsInteger.ToString;
+        tkInt64: Result := Value.AsInt64.ToString;
+        tkString, tkUString, tkWString, tkLString: Result := Value.AsString;
+        tkWChar, tkChar: Result := Value.AsType<Char>;
+        tkFloat: begin
+          if Value.TypeInfo.Name = 'TDate' then
+          begin
+            Result := DateToStr(Value.AsExtended, fLocaleFormatSettings);
+          end
+          else if Value.TypeInfo.Name = 'TDateTime' then
+          begin
+            Result := DateTimeToStr(Value.AsExtended, fLocaleFormatSettings);
+          end
+          else
+          begin
+            Result := FloatToStr(Value.AsExtended, fLocaleFormatSettings);
+          end;
+        end;
+        tkEnumeration: Result := Value.ToString;
+        else
+          raise ETProException.Create('Unsupported type for variable "' + VarName + '"');
+      end;
+      //Result := Value.ToString;
     end;
   end;
 
@@ -678,6 +753,17 @@ begin
     Create(TEncoding.UTF8, []) { default encoding }
   else
     Create(aEncoding, []);
+end;
+
+procedure TTProCompiler.MatchFilter(lVarName: string; var lFuncName: string; var lFuncParamsCount: Integer; var lFuncParams: TArray<String>);
+begin
+  MatchSpace;
+  if not MatchVariable(lFuncName) then
+    Error('Invalid function name applied to variable ' + lVarName);
+  MatchSpace;
+  lFuncParams := GetFunctionParameters;
+  lFuncParamsCount := Length(lFuncParams);
+  MatchSpace;
 end;
 
 function TTProCompiler.CurrentChar: Char;
@@ -878,6 +964,8 @@ var
   lContentOnThisLine: Integer;
   lStrVerbatim: string;
   lLayoutFound: Boolean;
+  lFoundVar: Boolean;
+  lFoundFilter: Boolean;
 begin
   aTokens.Add(TToken.Create(ttSystemVersion, TEMPLATEPRO_VERSION, ''));
   lLastToken := ttEOF;
@@ -957,27 +1045,29 @@ begin
 
       if CurrentChar = ':' then // variable
       begin
+        lFoundVar := False;
+        lFoundFilter := False;
         Step;
+        lRef2 := -1;
         if MatchVariable(lVarName) then { variable }
         begin
+          lFoundVar := True;
           if lVarName.IsEmpty then
             Error('Invalid variable name');
           lFuncName := '';
           lFuncParamsCount := -1; { -1 means "no filter applied to value" }
-          lRef2 := IfThen(MatchSymbol('$'), 1, -1);
-          // {{value$}} means no escaping
+          lRef2 := IfThen(MatchSymbol('$'), 1, -1); // {{value$}} means no escaping
           MatchSpace;
-          if MatchSymbol('|') then
-          begin
-            MatchSpace;
-            if not MatchVariable(lFuncName) then
-              Error('Invalid function name applied to variable ' + lVarName);
-            MatchSpace;
-            lFuncParams := GetFunctionParameters;
-            lFuncParamsCount := Length(lFuncParams);
-            MatchSpace;
-          end;
+        end;
 
+        if MatchSymbol('|') then
+        begin
+          lFoundFilter := True;
+          MatchFilter(lVarName, lFuncName, lFuncParamsCount, lFuncParams);
+        end;
+
+        if lFoundVar or lFoundFilter then
+        begin
           if not MatchEndTag then
           begin
             Error('Expected end tag "' + END_TAG + '" near ' + GetSubsequentText);
@@ -999,7 +1089,11 @@ begin
               end;
             end;
           end;
-        end; // matchvariable
+        end
+        else
+        begin
+          Error('Expected variable or filter near ' + GetSubsequentText);
+        end;
       end
       else
       begin
@@ -1561,7 +1655,7 @@ begin
 end;
 
 function TTProCompiledTemplate.ExecuteFilter(aFunctionName: string; aParameters: TArray<string>;
-  aValue: TValue): TValue;
+  aValue: TValue; const aVarNameWhereShoudBeApplied: String): TValue;
 var
   lDateValue: TDateTime;
   lDateFilterFormatSetting: TFormatSettings;
@@ -1569,7 +1663,10 @@ var
   lFunc: TTProTemplateFunction;
   lAnonFunc: TTProTemplateAnonFunction;
   lIntegerPar1: Integer;
+  lDecimalMask: string;
+  lExecuteAsFilterOnAValue: Boolean;
 begin
+  lExecuteAsFilterOnAValue := not aVarNameWhereShoudBeApplied.IsEmpty;
   aFunctionName := lowercase(aFunctionName);
   if SameText(aFunctionName, 'gt') then
   begin
@@ -1609,15 +1706,42 @@ begin
   end
   else if SameText(aFunctionName, 'uppercase') then
   begin
-    Result := UpperCase(aValue.AsString);
+    if lExecuteAsFilterOnAValue then
+    begin
+      CheckParNumber(0, aParameters);
+      Result := UpperCase(aValue.AsString);
+    end
+    else
+    begin
+      CheckParNumber(1, aParameters);
+      Result := UpperCase(aParameters[0]);
+    end;
   end
   else if SameText(aFunctionName, 'lowercase') then
   begin
-    Result := lowercase(aValue.AsString);
+    if lExecuteAsFilterOnAValue then
+    begin
+      CheckParNumber(0, aParameters);
+      Result := lowercase(aValue.AsString);
+    end
+    else
+    begin
+      CheckParNumber(1, aParameters);
+      Result := lowercase(aParameters[0]);
+    end;
   end
   else if SameText(aFunctionName, 'capitalize') then
   begin
-    Result := CapitalizeString(aValue.AsString, True);
+    if lExecuteAsFilterOnAValue then
+    begin
+      CheckParNumber(0, aParameters);
+      Result := CapitalizeString(aValue.AsString, True);
+    end
+    else
+    begin
+      CheckParNumber(1, aParameters);
+      Result := CapitalizeString(aParameters[0], True);
+    end;
   end
   else if SameText(aFunctionName, 'trunc') then
   begin
@@ -1671,6 +1795,16 @@ begin
       Result := lStrValue.PadLeft(aParameters[0].ToInteger, aParameters[1].Chars[0]);
     end;
   end
+  else if SameText(aFunctionName, 'round') then
+  begin
+    CheckParNumber(1, aParameters);
+    lDecimalMask := '';
+    if aParameters[0].ToInteger < 0 then
+    begin
+      lDecimalMask := '.' + StringOfChar('0', Abs(aParameters[0].ToInteger));
+    end;
+    Result := FormatFloat('0' + lDecimalMask, RoundTo(aValue.AsExtended, aParameters[0].ToInteger));
+  end
   else if SameText(aFunctionName, 'datetostr') then
   begin
     if aValue.IsEmpty then
@@ -1681,7 +1815,7 @@ begin
     begin
       if Length(aParameters) = 0 then
       begin
-        Result := DateToStr(lDateValue)
+        Result := DateToStr(lDateValue, fLocaleFormatSettings)
       end
       else
       begin
@@ -1704,7 +1838,7 @@ begin
     else if aValue.TryAsType<TDateTime>(lDateValue) then
     begin
       if Length(aParameters) = 0 then
-        Result := DateTimeToStr(lDateValue)
+        Result := DateTimeToStr(lDateValue, fLocaleFormatSettings)
       else
       begin
         CheckParNumber(1, aParameters);
@@ -1728,6 +1862,10 @@ begin
   end
   else if SameText(aFunctionName, 'version') then
   begin
+    if lExecuteAsFilterOnAValue then
+    begin
+      FunctionError(aFunctionName, 'cannot be applied to a value - [HINT] Use {{:|' + aFunctionName + '}}');
+    end;
     CheckParNumber(0, aParameters);
     Result := TEMPLATEPRO_VERSION;
   end
@@ -2075,8 +2213,7 @@ begin
   fTemplateFunctions := TDictionary<string, TTProTemplateFunction>.Create(TTProEqualityComparer.Create);
   fTemplateAnonFunctions := nil;
   TTProConfiguration.RegisterHandlers(self);
-  fLocaleFormatSettings.DateSeparator := '-';
-  fLocaleFormatSettings.TimeSeparator := ':';
+  fLocaleFormatSettings := TFormatSettings.Invariant;
   fLocaleFormatSettings.ShortDateFormat := 'yyyy-mm-dd';
 end;
 
@@ -2584,6 +2721,26 @@ begin
                 begin
                   Result := lPJSONDataValue.ObjectValue.ToJSON();
                 end;
+              jdtFloat:
+                begin
+                  Result := lPJSONDataValue.FloatValue;
+                end;
+              jdtInt:
+                begin
+                  Result := lPJSONDataValue.IntValue;
+                end;
+              jdtLong:
+                begin
+                  Result := lPJSONDataValue.LongValue;
+                end;
+              jdtULong:
+                begin
+                  Result := lPJSONDataValue.ULongValue;
+                end;
+              jdtBool:
+                begin
+                  Result := lPJSONDataValue.BoolValue;
+                end;
             else
               Result := lPJSONDataValue.Value;
             end;
@@ -3011,11 +3168,11 @@ begin
     end;
     case lCurrTokenType of
       ttValue:
-        Result := ExecuteFilter(lFilterName, lFilterParameters, GetVarAsTValue(lVarName));
+        Result := ExecuteFilter(lFilterName, lFilterParameters, GetVarAsTValue(lVarName), lVarName);
       ttBoolExpression:
-        Result := IsTruthy(ExecuteFilter(lFilterName, lFilterParameters, GetVarAsTValue(lVarName)));
+        Result := IsTruthy(ExecuteFilter(lFilterName, lFilterParameters, GetVarAsTValue(lVarName), lVarName));
       ttLiteralString:
-        Result := ExecuteFilter(lFilterName, lFilterParameters, lVarName);
+        Result := ExecuteFilter(lFilterName, lFilterParameters, lVarName, lVarName);
     else
       Error('Invalid token in EvaluateValue');
     end;
@@ -3102,6 +3259,11 @@ begin
 
 end;
 
+procedure TTProCompiledTemplate.SetFormatSettings(const Value: PTProFormatSettings);
+begin
+  fLocaleFormatSettings := Value^;
+end;
+
 procedure TTProCompiledTemplate.SetOnGetValue(const Value: TTProCompiledTemplateGetValueEvent);
 begin
   fOnGetValue := Value;
@@ -3167,10 +3329,10 @@ var
 begin
   ARttiType := GlContext.GetType(AObject.ClassType);
   if not Assigned(ARttiType) then
-    raise Exception.CreateFmt('Cannot get RTTI for type [%s]', [ARttiType.ToString]);
+    raise Exception.CreateFmt('Unknown type [%s]', [ARttiType.ToString]);
   Prop := ARttiType.GetProperty(APropertyName);
   if not Assigned(Prop) then
-    raise Exception.CreateFmt('Cannot get RTTI for property [%s.%s]', [ARttiType.ToString, APropertyName]);
+    raise Exception.CreateFmt('Unknown property [%s.%s]', [ARttiType.ToString, APropertyName]);
   if Prop.IsReadable then
     Result := Prop.GetValue(AObject)
   else
