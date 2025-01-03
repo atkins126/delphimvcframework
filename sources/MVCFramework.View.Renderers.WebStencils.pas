@@ -45,6 +45,7 @@ type
   protected
     procedure RegisterWSFunctions(WSProcessor: TWebStencilsProcessor);
     procedure OnGetValue(Sender: TObject; const AObjectName, APropName: string; var AReplaceText: string; var AHandled: Boolean);
+    procedure OnGetFile(Sender: TObject; const AFilename: string; var AText: string; var AHandled: Boolean);
   public
     class function GetTValueVarAsString(const Value: TValue; const VarName: string; const Processor: TWebStencilsProcessor): String;
     procedure Execute(const ViewName: string; const Builder: TStringBuilder); override;
@@ -152,13 +153,27 @@ begin
     end);
 end;
 
+procedure TMVCWebStencilsViewEngine.OnGetFile(Sender: TObject; const AFilename: string; var AText: string; var AHandled: Boolean);
+var
+  lFName: String;
+begin
+  AHandled := False;
+  if TPath.IsRelativePath(AFilename) then
+  begin
+    lFName := TPath.Combine(FViewPath, AFilename);
+    lFName := TPath.ChangeExtension(lfname, FDefaultViewFileExtension);
+    lFName := TPath.Combine(AppPath, lfname);
+    AText := TFile.ReadAllText(lfname);
+    AHandled := True;
+  end;
+end;
 
 procedure TMVCWebStencilsViewEngine.OnGetValue(Sender: TObject; const AObjectName, APropName: string; var AReplaceText: string; var AHandled: Boolean);
 var
   lValue: TValue;
 begin
   AHandled := False;
-  if ViewModel.TryGetValue(AObjectName, lValue) then
+  if (ViewModel <> nil) and ViewModel.TryGetValue(AObjectName, lValue) then
   begin
     AReplaceText := GetTValueVarAsString(lValue, AObjectName, TWebStencilsProcessor(Sender));
     AHandled := True;
@@ -190,17 +205,33 @@ begin
       end) as IInvokable,
       'json', 'json', '', True, 'Serialize an object to JSON', nil));
 
-  TBindingMethodsFactory.RegisterMethod(
-   TMethodDescription.Create(
-    MakeInvokable(function(Args: TArray<IValue>): IValue
-    begin
-      if Length(Args) <> 1 then
+    TBindingMethodsFactory.RegisterMethod(
+     TMethodDescription.Create(
+      MakeInvokable(function(Args: TArray<IValue>): IValue
       begin
-        raise EWebStencilsException.Create('Expected 1 parameter, got ' + Length(Args).ToString);
-      end;
-      Result := TValueWrapper.Create(TMVCWebStencilsViewEngine.GetTValueVarAsString(Args[0].GetValue, '', nil));
-    end),
-    'ValueOf', 'ValueOf', '', True, 'ValueOf returns the inner value of a nullable as string - the non-nullable types are returned as-is', nil));
+        if Length(Args) <> 1 then
+        begin
+          raise EWebStencilsException.Create('Expected 1 parameter, got ' + Length(Args).ToString);
+        end;
+        Result := TValueWrapper.Create(TMVCWebStencilsViewEngine.GetTValueVarAsString(Args[0].GetValue, '', nil));
+      end),
+      'ValueOf', 'ValueOf', '', True, 'ValueOf returns the inner value of a nullable as string - the non-nullable types are returned as-is', nil));
+
+    TBindingMethodsFactory.RegisterMethod(
+     TMethodDescription.Create(
+      MakeInvokable(function(Args: TArray<IValue>): IValue
+      begin
+        if Length(Args) <> 1 then
+        begin
+          raise EWebStencilsException.Create('Expected 1 parameter, got ' + Length(Args).ToString);
+        end;
+        if (ViewModel <> nil) and ViewModel.ContainsKey(Args[0].GetValue.AsString) then
+          Result := TValueWrapper.Create(True)
+        else
+          Result := TValueWrapper.Create(False);
+      end),
+      'Defined', 'Defined', '', True, 'Defined returns true if variable is defined', nil));
+
 
   finally
     TMonitor.Exit(gWSLock);
@@ -229,6 +260,8 @@ begin
       lWebStencilsProcessor.InputFileName := lViewFileName;
       lWebStencilsProcessor.PathTemplate := Config[TMVCConfigKey.ViewPath];
       lWebStencilsProcessor.WebRequest := WebContext.Request.RawWebRequest;
+      lWebStencilsProcessor.OnFile := OnGetFile;
+
       if Assigned(ViewModel) then
       begin
         for lPair in ViewModel do
@@ -239,6 +272,7 @@ begin
       end;
       if Assigned(WebContext.LoggedUser) then
       begin
+        lWebStencilsProcessor.UserLoggedIn := True;
         lWebStencilsProcessor.UserRoles := WebContext.LoggedUser.Roles.ToString;
       end;
       if Assigned(FBeforeRenderCallback) then
