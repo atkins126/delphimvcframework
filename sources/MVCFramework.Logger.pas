@@ -2,7 +2,7 @@
 //
 // Delphi MVC Framework
 //
-// Copyright (c) 2010-2024 Daniele Teti and the DMVCFramework Team
+// Copyright (c) 2010-2025 Daniele Teti and the DMVCFramework Team
 //
 // https://github.com/danieleteti/delphimvcframework
 //
@@ -99,6 +99,7 @@ function Log: ILogWriter; overload;
 procedure SetDefaultLogger(const aLogWriter: ILogWriter);
 //procedure InitializeDefaultLogger;
 function CreateLoggerWithDefaultConfiguration: ILogWriter;
+function CreateNullLogger: ILogWriter;
 
 { @abstract(Use only inside DLL because dll unloading is not a safe place to shutdown threads, so call this before unload DLL)
   Use this also in ISAPI dll. Check the @code(loggerproisapisample.dll) sample
@@ -118,7 +119,7 @@ uses
   {$IF Defined(MSWINDOWS)}
   LoggerPro.ConsoleAppender,
   {$ELSE}
-  {$IF Not Defined(MOBILE)}
+  {$IF Defined(CONSOLE) and Not Defined(MOBILE)}
   LoggerPro.SimpleConsoleAppender, //only for linux
   {$ENDIF}
   {$ENDIF}
@@ -342,6 +343,11 @@ begin
 end;
 
 
+function CreateNullLogger: ILogWriter;
+begin
+  Result := BuildLogWriter([], nil, gLevelsMap[UseLoggerVerbosityLevel]);
+end;
+
 function CreateLoggerWithDefaultConfiguration: ILogWriter;
 var
   lLogsFolder: String;
@@ -359,11 +365,14 @@ begin
     {$IF Defined(MSWINDOWS)}
     lConsoleAppender := TLoggerProConsoleAppender.Create(TLogItemRendererNoTag.Create);
     {$ELSE}
-    {$IF Not Defined(MOBILE)}
+    {$IF Defined(CONSOLE) and Not Defined(MOBILE)}
     lConsoleAppender := TLoggerProSimpleConsoleAppender.Create(TLogItemRendererNoTag.Create);
     {$ENDIF}
     {$ENDIF}
-    lAppenders := [lFileAppender, lConsoleAppender];
+  end;
+  if Assigned(lConsoleAppender) then
+  begin
+    lAppenders := [lFileAppender, lConsoleAppender]
   end
   else
   begin

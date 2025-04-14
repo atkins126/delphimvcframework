@@ -2,7 +2,7 @@
 //
 // Delphi MVC Framework
 //
-// Copyright (c) 2010-2024 Daniele Teti and the DMVCFramework Team
+// Copyright (c) 2010-2025 Daniele Teti and the DMVCFramework Team
 //
 // https://github.com/danieleteti/delphimvcframework
 //
@@ -1326,7 +1326,7 @@ begin
     lDS.LoadFromFile(lFName);
     ViewData['customers'] := lDS;
     ViewData['customers2'] := lDS;
-    ResponseStream.Append(Page('dataset_list'));
+    ResponseStream.Append(RenderView('dataset_list'));
     RenderResponseStream;
   finally
     lDS.Free;

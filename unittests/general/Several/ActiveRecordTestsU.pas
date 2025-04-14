@@ -2,7 +2,7 @@
 //
 // Delphi MVC Framework
 //
-// Copyright (c) 2010-2024 Daniele Teti and the DMVCFramework Team
+// Copyright (c) 2010-2025 Daniele Teti and the DMVCFramework Team
 //
 // https://github.com/danieleteti/delphimvcframework
 //
@@ -752,7 +752,7 @@ begin
     lCustomer.Insert;
     Assert.AreEqual
       ('OnValidation|OnBeforeInsert|OnBeforeInsertOrUpdate|OnBeforeExecuteSQL|MapObjectToParams|OnAfterInsert|OnAfterInsertOrUpdate',
-      lCustomer.GetHistory);
+      lCustomer.GetHistory, 'step1');
     lID := lCustomer.ID;
   finally
     lCustomer.Free;
@@ -760,24 +760,26 @@ begin
 
   lCustomer := TMVCActiveRecord.GetByPK<TCustomerWithLF>(lID);
   try
-    Assert.AreEqual('OnBeforeLoad|MapDatasetToObject|OnAfterLoad', lCustomer.GetHistory);
+    Assert.AreEqual('OnBeforeExecuteSQL|OnBeforeLoad|MapDatasetToObject|OnAfterLoad',
+      lCustomer.GetHistory, 'step2');
     lCustomer.ClearHistory;
     lCustomer.City := 'XXX';
     lCustomer.Update;
     Assert.AreEqual
       ('OnValidation|OnBeforeUpdate|OnBeforeInsertOrUpdate|OnBeforeExecuteSQL|MapObjectToParams|OnAfterUpdate|OnAfterInsertOrUpdate',
-      lCustomer.GetHistory);
+      lCustomer.GetHistory, 'step3');
   finally
     lCustomer.Free;
   end;
 
   lCustomer := TMVCActiveRecord.GetOneByWhere<TCustomerWithLF>('id = ?', [lID]);
   try
-    Assert.AreEqual('OnBeforeLoad|MapDatasetToObject|OnAfterLoad', lCustomer.GetHistory);
+    Assert.AreEqual('OnBeforeLoad|MapDatasetToObject|OnAfterLoad',
+      lCustomer.GetHistory, 'step4');
     lCustomer.ClearHistory;
     lCustomer.Delete;
     Assert.AreEqual('OnValidation|OnBeforeDelete|OnBeforeExecuteSQL|MapObjectToParams|OnAfterDelete',
-      lCustomer.GetHistory);
+      lCustomer.GetHistory, 'step5');
   finally
     lCustomer.Free;
   end;
@@ -1994,12 +1996,15 @@ begin
     var
       lCustomer: TCustomer;
       I: Integer;
+      lConn: TFDConnection;
     begin
       // ActiveRecordConnectionsRegistry.AddDefaultConnection(TFDConnection.Create(nil), True);
-      ActiveRecordConnectionsRegistry.AddConnection('load', TFDConnection.Create(nil), True);
+      lConn := TFDConnection.Create(nil);
+      ActiveRecordConnectionsRegistry.AddConnection('load', lConn, True);
       try
+        lConn.ConnectionDefName := fConDefName;
         ActiveRecordConnectionsRegistry.SetCurrent('load');
-        ActiveRecordConnectionsRegistry.GetCurrent.ConnectionDefName := fConDefName;
+        //ActiveRecordConnectionsRegistry.GetCurrent.ConnectionDefName := fConDefName;
         for I := 1 to 30 do
         begin
           lCustomer := TCustomer.Create;

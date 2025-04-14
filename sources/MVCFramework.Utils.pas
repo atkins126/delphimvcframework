@@ -2,7 +2,7 @@
 //
 // Delphi MVC Framework
 //
-// Copyright (c) 2010-2024 Daniele Teti and the DMVCFramework Team
+// Copyright (c) 2010-2025 Daniele Teti and the DMVCFramework Team
 //
 // https://github.com/danieleteti/delphimvcframework
 //
@@ -85,6 +85,8 @@ type
     class procedure ForEach<T>(const Enumerable: TEnumerable<T>;
       const ForEachClosure: TForEachClosure<T>); overload;
   end;
+
+  _ = HigherOrder;
 
 function NewJSONSerializer: IMVCJSONSerializer;
 function StrToJSONObject(const aString: String; aRaiseExceptionOnError: Boolean = False): TJsonObject;

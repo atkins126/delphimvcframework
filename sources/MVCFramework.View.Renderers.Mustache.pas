@@ -2,7 +2,7 @@
 //
 // Delphi MVC Framework
 //
-// Copyright (c) 2010-2024 Daniele Teti and the DMVCFramework Team
+// Copyright (c) 2010-2025 Daniele Teti and the DMVCFramework Team
 //
 // https://github.com/danieleteti/delphimvcframework
 //
@@ -79,6 +79,7 @@ type
 implementation
 
 uses
+  Types,
   JsonDataObjects,
   MVCFramework.Serializer.Defaults,
   MVCFramework.Serializer.Intf,
@@ -171,7 +172,7 @@ var
   lViewsExtension: string;
   lViewPath: string;
   lPartialName: String;
-  lPartialFileNames: TArray<string>;
+  lPartialFileNames: TStringDynArray;
   I: Integer;
 begin
   if gPartialsLoaded then

@@ -2,7 +2,7 @@
 //
 // Delphi MVC Framework
 //
-// Copyright (c) 2010-2024 Daniele Teti and the DMVCFramework Team
+// Copyright (c) 2010-2025 Daniele Teti and the DMVCFramework Team
 //
 // https://github.com/danieleteti/delphimvcframework
 //
@@ -511,7 +511,7 @@ var
   res: IMVCRESTResponse;
 begin
   res := RESTClient.Get('/logout');
-  Assert.isTrue(res.StatusCode = HTTP_STATUS.OK, 'Logout Failed');
+  Assert.isTrue(res.StatusCode = HTTP_STATUS.OK, 'Logout Failed: ' + res.Content);
 end;
 
 procedure TBaseServerTest.Setup;
@@ -3141,7 +3141,7 @@ var
   res: IMVCRESTResponse;
 begin
   res := RESTClient.AddPathParam('username', UserName).Get('/login/{username}');
-  Assert.isTrue(res.StatusCode = HTTP_STATUS.OK, 'Login Failed');
+  Assert.isTrue(res.StatusCode = HTTP_STATUS.OK, 'Login Failed: ' + res.Content);
 end;
 
 { TJSONRPCServerTest }

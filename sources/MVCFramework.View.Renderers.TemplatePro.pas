@@ -2,7 +2,7 @@
 //
 // Delphi MVC Framework
 //
-// Copyright (c) 2010-2024 Daniele Teti and the DMVCFramework Team
+// Copyright (c) 2010-2025 Daniele Teti and the DMVCFramework Team
 //
 // https://github.com/danieleteti/delphimvcframework
 //
@@ -203,11 +203,13 @@ begin
       begin
         lCompiledTemplate.SetData(lPair.Key, lPair.Value);
       end;
-      lCompiledTemplate.SetData('LoggedUserName', WebContext.LoggedUser.UserName);
+      if WebContext.LoggedUserExists then
+      begin
+        lCompiledTemplate.SetData('LoggedUserName', WebContext.LoggedUser.UserName);
+      end;
     end;
     lCompiledTemplate.AddFilter('json', DumpAsJSONString);
     lCompiledTemplate.AddFilter('count', GetDataSetOrObjectListCount);
-//    lCompiledTemplate.AddFilter('now', GetNow);
     lCompiledTemplate.AddFilter('fromquery',
       function (const aValue: TValue; const aParameters: TArray<TFilterParameter>): TValue
       begin

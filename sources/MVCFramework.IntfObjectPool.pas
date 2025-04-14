@@ -2,7 +2,7 @@
 //
 // Delphi MVC Framework
 //
-// Copyright (c) 2010-2024 Daniele Teti and the DMVCFramework Team
+// Copyright (c) 2010-2025 Daniele Teti and the DMVCFramework Team
 //
 // https://github.com/danieleteti/delphimvcframework
 //
@@ -253,9 +253,11 @@ end;
 
 function TIntfCleanupThread<IInterface>.GetAveragePoolSize(
   var SizeSamples: TPoolSizeSamples): Integer;
+var
+  I: Integer;
 begin
   Result := 0;
-  for var I := Low(TPoolSizeSamples) to High(TPoolSizeSamples) do
+  for I := Low(TPoolSizeSamples) to High(TPoolSizeSamples) do
   begin
     Inc(Result, SizeSamples[I]);
   end;
